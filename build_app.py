@@ -2059,7 +2059,8 @@ def main(argv):
         step_code_botw(tree, botw, update or game, keys, env, logs, version=version)
         step_data_botw(tree, botw, game, keys, logs, version=version, update=update, dlc=dlcs, firmware=firmware, shared_fonts=shared_fonts)
         step_shaders_botw(tree, botw, logs, version=version)
-        step_shader_libs(tree, logs, version=version)
+        if not device_app:   # the Mac app's metallibs; build_ipa.py compiles the device's own (6 of a 21-minute iPhone build, 2026-10-28)
+            step_shader_libs(tree, logs, version=version)
         # The work folder's copy of games/botw (prepare_work), relative: make splits a path with spaces into several targets
         step_binary(tree, game, keys, {**env, 'SHADER_LIST': '../botw/assets/shader_list.tsv'}, logs, version=version, title='01007ef00011e000')
         say(f'4/4 app: assembling {out}')
@@ -2122,7 +2123,8 @@ def main(argv):
     if mod:
         check_mod_overlays(tree, mod, version)
     step_shaders(tree, logs, version=version)
-    step_shader_libs(tree, logs, version=version)
+    if not device_app:   # the Mac app's metallibs; build_ipa.py compiles the device's own
+        step_shader_libs(tree, logs, version=version)
     step_binary(tree, game, keys, env, logs, version=version)
     say(f'4/4 app: assembling {out}')
     if device_app:
