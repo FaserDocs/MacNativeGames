@@ -158,6 +158,7 @@ python3.14 games/totk/ios/tools/install_device.py "<文件夹>/Tears of the King
 ```
 
 - `<版本>` 填那里实际有的文件夹（1.4.3 是 `v143`；用 `ls "<工作目录>/totk/extracted"` 看）。第一次安装会把 17 GB 的镜像拷过去一次。
+- iPhone / iPad 只连着 Wi‑Fi 时脚本会停下：插上数据线、解锁设备，再跑一次。加 `--wifi` 也能走 Wi‑Fi 装，但很慢，游戏数据可能传到一半断开。
 - 免费 Apple ID 的签名 7 天有效，付费账号一年。到期后再跑同一条命令续签，存档会保留。
 - 设备提示时，到“设置 › 通用 › VPN 与设备管理”里信任开发者。
 

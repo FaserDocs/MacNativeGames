@@ -158,6 +158,7 @@ python3.14 games/totk/ios/tools/install_device.py "<folder>/Tears of the Kingdom
 ```
 
 - `<version>` is the folder that is there (`v143` for 1.4.3; `ls "<work folder>/totk/extracted"`). The first install copies the 17 GB image once.
+- The script stops when the iPhone or iPad is connected over Wi-Fi only: plug in the cable, unlock the device and run it again. `--wifi` installs over Wi-Fi anyway; it is slow, and the game data copy can drop.
 - A free Apple ID signs for 7 days, a paid one for a year. Run the same command again to renew; your saves are kept.
 - If the device asks, trust the developer in Settings › General › VPN & Device Management.
 
