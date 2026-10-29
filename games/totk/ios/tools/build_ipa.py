@@ -5,6 +5,7 @@ shader list and the add-on content beside the RomFS)."""
 import argparse, json, os, plistlib, shutil, subprocess, sys, time
 from pathlib import Path
 from compile_seed import METAL_FLAGS
+from device_pipelines import connected_gpus
 from xcode_dir import developer_dir
 
 def run(args, cwd, log, env):
@@ -73,6 +74,7 @@ def main():
     p.add_argument('--tree',type=Path,required=True);p.add_argument('--out',type=Path,required=True)
     p.add_argument('--version',choices=['v0','v112','v121','v143','botw160','botw190'],required=True);p.add_argument('--logs',type=Path,required=True)
     p.add_argument('--platform',choices=['ios','visionos'],default='ios')
+    p.add_argument('--device-gpu',action='append',default=[],metavar='ARCH',help='compile the pipeline archive here for this device GPU (applegpu_g14p: iPhone 14); auto (default): the iPhones / iPads on the cable; none')
     p.add_argument('--image-outside',action='store_true',help='leave romfs.bin out: the device keeps it in Documents/GameData');p.add_argument('--app-name',default='Tears of the Kingdom');p.add_argument('--bundle-id',default='org.macnativegames.totk')
     a=p.parse_args(); tree=a.tree.resolve(); ios=tree/'ios';gen=ios/'Gen';logs=a.logs.resolve(); out=a.out.resolve()
     if out.suffix.lower() not in ('.ipa','.app'): raise RuntimeError('iOS output path must end in .ipa (or .app: the unsigned folder)')
@@ -146,7 +148,7 @@ def main():
     # whose seed did not change hashes nothing (all ~100,000 files were read again in each build, 2026-10-22).
     # shader_map.tsv is read in place (DM_NVN_SHMAP); the importer accepts only shader files, so it stays out of the list.
     manifest=json.loads((seed/'seed-manifest.json').read_text()); known=manifest.get('files',{})
-    names=sorted(n for n in os.listdir(seed) if n not in ('seed-manifest.json','shader_map.tsv') and (seed/n).is_file())
+    names=sorted(n for n in os.listdir(seed) if n not in ('seed-manifest.json','shader_map.tsv') and not n.startswith('pipelines-') and (seed/n).is_file())
     manifest['files']={n:known.get(n) or hashlib.sha256((seed/n).read_bytes()).hexdigest() for n in names}
     (seed/'seed-manifest.json').write_text(json.dumps(manifest,indent=2)+'\n')
     # Generate the app project with resolved identity and the embedded-segment linker flags.
@@ -200,10 +202,42 @@ def main():
     if aliases.is_file():
         run([sys.executable,tree/'scripts/shader_list.py','rename',aliases,lists/'pso_title.tsv',
              lists/'pso_list.tsv'],tree,logs/'shader-list-rename.log',env)
+    # The device's pipeline archive, compiled here (2026-10-29): the Mac game binary makes every pipeline of the lists from
+    # the device seed's metallibs (pipeline-archive mode), device_pipelines.py compiles them for the device GPU with metal-tt
+    # into the seed (pipelines-<arch>-*). The first start then takes them from there instead of filling its own archive:
+    # Breath of the Wild 1.6.0 on an iPhone 14 spent 567.8 s on that before the title. Without a GPU to build for, the
+    # device fills it as before. Kept in build/ios-pipelines/<version>, so a build whose lists did not change is quick.
+    gpus=[]
+    for g in a.device_gpu or ['auto']:
+        if g=='auto':
+            found=connected_gpus(env)
+            for name,product,arch in found: print(f'pipelines: {name} ({product}) on the cable: '+(arch or 'GPU not known here, its first start fills them'))
+            if not found: print('pipelines: no iPhone / iPad on the cable, so its first start fills them (about 10 minutes); connect it, or --device-gpu <arch>')
+            gpus+=[arch for _,_,arch in found if arch]
+        elif g!='none': gpus.append(g)
+    gpus=sorted(set(gpus))
+    pipe_work=tree/f'build/ios-pipelines/{a.version}'
+    if gpus:
+        mac=pipe_work/'mac-cache'; stamp=mac/'seed.txt'
+        want=hashlib.sha256((seed/'seed-manifest.json').read_bytes()+(lists/'pso_list.tsv').read_bytes()+(lists/'pso_title.tsv').read_bytes()).hexdigest()
+        if not (stamp.is_file() and stamp.read_text().strip()==want): shutil.rmtree(mac,ignore_errors=True)   # pipelines of other shaders or lists
+        mac.mkdir(parents=True,exist_ok=True)
+        t0=time.time()
+        run([host,rewritten,'pipeline-archive',lists/'pso_title.tsv',lists/'pso_list.tsv',seed/'pso_manifest.tsv'],tree,logs/'device-pipelines-mac.log',
+            dict(env,TOTK_SHADER_CACHE=str(mac),TOTK_SHADER_SEED_DIR=str(seed),TOTK_DEBUG_LOG='1'))
+        stamp.write_text(want+'\n')
+        print(f'pipelines: made on the Mac in {time.time()-t0:.0f} s; compiling them for {", ".join(gpus)}',flush=True)
+    t0=time.time()
+    run([sys.executable,ios/'tools/device_pipelines.py','--mac',pipe_work/'mac-cache/pipelines','--seed',seed,'--cache',pipe_work,'--sdk',sdk_name,
+         *[x for g in gpus for x in ('--arch',g)]],tree,logs/'device-pipelines.log',env)
+    if gpus:
+        done=json.loads((logs/'device-pipelines.log').read_text().strip().splitlines()[-1])
+        for r in done['archs']: print(f"pipelines: {r['arch']}: {r['pipelines']} ({r['compiled']} compiled, {r['kept']} kept from earlier builds, "
+                                      f"{r['failed']} failed) in {time.time()-t0:.0f} s; {done['library from source']} use shaders the device compiles itself")
     # What the device reads: the seed and the two lists. With --image-outside it goes beside the app (<out>-shader-seed),
     # for install_device.py to put into Documents/GameData once per content (main.m); unchanged content is not copied again.
     fingerprint=hashlib.sha256(b''.join((d/n).read_bytes() for d,n in [(seed,'seed-manifest.json'),(seed,'shader_map.tsv'),
-                                        (lists,'pso_list.tsv'),(lists,'pso_title.tsv')])).hexdigest()
+                                        (lists,'pso_list.tsv'),(lists,'pso_title.tsv')]+[(seed,f'pipelines-{g}.tsv') for g in gpus])).hexdigest()
     seed_out=out.with_name(out.stem+'-shader-seed') if a.image_outside else res/'shader-seed'
     stamp=seed_out/'fingerprint.txt'
     if not (a.image_outside and stamp.is_file() and stamp.read_text().strip()==fingerprint):
