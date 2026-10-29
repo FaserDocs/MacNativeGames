@@ -5567,12 +5567,36 @@ static void variant_record(NSData *raw) {
     if (![raw writeToFile:path atomically:YES]) { static int said; if (!said++) MLOG("【红】补丁变体的源码存不下：%s", path.UTF8String); }
 }
 #endif
-static id<MTLLibrary> variant_library(NSString *src, NSError **err) {
-#if !TARGET_OS_IPHONE
-    NSData *raw = [src dataUsingEncoding:NSUTF8StringEncoding];
-    id<MTLLibrary> pre = raw ? shader_lib_prebuilt(raw) : nil;   // compiled into the app from an earlier run's record
-    if (pre) { atomic_fetch_add_explicit(&g_stat_variant_pre, 1, memory_order_relaxed); return pre; }
+/* The seed's libraries are the device's (iOS; on the Mac TOTK_SHADER_DEVICE_LIBS=1, the pipeline-archive mode). */
+static int shader_device_libs(void) {
+#if TARGET_OS_IPHONE
+    return 1;
+#else
+    static int on = -1; if (on < 0) { const char *dl = getenv("TOTK_SHADER_DEVICE_LIBS"); on = dl && !strcmp(dl, "1"); }
+    return on;
 #endif
+}
+/* iOS (and the Mac's pipeline-archive mode): the variant compiled for the device while packaging (2026-10-29;
+   ios/tools/device_pipelines.py --variants, from the sources the Mac recorded making the device's pipelines), in the seed as
+   variant-<SHA-256 of the source>.metallib: loaded instead of compiled (45-225 ms each on an iPhone 14), and the pipeline
+   archive the Mac made for the device names this very library (par_load_prebuilt), so those pipelines come from it too. */
+static id<MTLLibrary> variant_library_seed(NSData *raw) {
+    const char *seed = getenv("TOTK_SHADER_SEED_DIR"); if (!seed || !*seed || !raw) return nil;
+    unsigned char md[CC_SHA256_DIGEST_LENGTH]; CC_SHA256(raw.bytes, (CC_LONG)raw.length, md);
+    char name[96] = "variant-"; for (size_t i = 0; i < sizeof md; i++) snprintf(name + 8 + 2 * i, 3, "%02x", md[i]);
+    NSString *path = [@(seed) stringByAppendingFormat:@"/%s.metallib", name];
+    if (![NSFileManager.defaultManager fileExistsAtPath:path]) return nil;
+    NSError *e = nil; id<MTLLibrary> lib = lib_from_file(path, &e);
+    if (!lib) MLOG("【红】预编译的补丁变体加载失败 %s：%s（改为现编）", name, e.localizedDescription.UTF8String);
+    return lib;
+}
+static id<MTLLibrary> variant_library(NSString *src, NSError **err) {
+    NSData *raw = [src dataUsingEncoding:NSUTF8StringEncoding];
+    id<MTLLibrary> pre = shader_device_libs() ? variant_library_seed(raw) : nil;
+#if !TARGET_OS_IPHONE
+    if (!pre && !shader_device_libs() && raw) pre = shader_lib_prebuilt(raw);   // compiled into the app from an earlier run's record
+#endif
+    if (pre) { atomic_fetch_add_explicit(&g_stat_variant_pre, 1, memory_order_relaxed); return pre; }
     uint64_t t0 = bp_now(); id<MTLLibrary> lib = totk_msl_library(src, err);
     if (g_variant_bg) atomic_fetch_add_explicit(&g_stat_variant_bg, 1, memory_order_relaxed);
     else {
@@ -5686,8 +5710,7 @@ static NvShader *shader_load(NSString *pc, int stage) {
         /* TOTK_SHADER_DEVICE_LIBS=1 (Mac, tools): load the seed's prebuilt .metallib files the way iOS does, e.g. the iOS
            seed, so the pipelines made here describe the very libraries an iPhone loads (pipeline archives built on the
            Mac for an iPhone GPU with metal-tt). */
-        static int device_libs = -1; if (device_libs < 0) { const char *dl = getenv("TOTK_SHADER_DEVICE_LIBS"); device_libs = dl && !strcmp(dl, "1"); }
-        if (device_libs)
+        if (shader_device_libs())
 #endif
         {
         // iOS: the variant precompiled on the Mac (ios/tools/build_metallibs.sh, same options) if it came in shaders.pack

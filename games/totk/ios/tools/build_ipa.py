@@ -169,7 +169,7 @@ def main():
     # whose seed did not change hashes nothing (all ~100,000 files were read again in each build, 2026-10-22).
     # shader_map.tsv is read in place (DM_NVN_SHMAP); the importer accepts only shader files, so it stays out of the list.
     manifest=json.loads((seed/'seed-manifest.json').read_text()); known=manifest.get('files',{})
-    names=sorted(n for n in os.listdir(seed) if n not in ('seed-manifest.json','shader_map.tsv') and not n.startswith('pipelines-') and (seed/n).is_file())
+    names=sorted(n for n in os.listdir(seed) if n not in ('seed-manifest.json','shader_map.tsv') and not n.startswith(('pipelines-','variant-')) and (seed/n).is_file())
     manifest['files']={n:known.get(n) or hashlib.sha256((seed/n).read_bytes()).hexdigest() for n in names}
     (seed/'seed-manifest.json').write_text(json.dumps(manifest,indent=2)+'\n')
     # Generate the app project with resolved identity and the embedded-segment linker flags.
@@ -238,27 +238,43 @@ def main():
         elif g!='none': gpus.append(g)
     gpus=sorted(set(gpus))
     pipe_work=tree/f'build/ios-pipelines/{a.version}'
-    if gpus:
-        mac=pipe_work/'mac-cache'; stamp=mac/'seed.txt'
-        want=hashlib.sha256((seed/'seed-manifest.json').read_bytes()+(lists/'pso_list.tsv').read_bytes()+(lists/'pso_title.tsv').read_bytes()).hexdigest()
-        if not (stamp.is_file() and stamp.read_text().strip()==want): shutil.rmtree(mac,ignore_errors=True)   # pipelines of other shaders or lists
-        mac.mkdir(parents=True,exist_ok=True)
-        t0=time.time()
-        run([host,rewritten,'pipeline-archive',lists/'pso_title.tsv',lists/'pso_list.tsv',seed/'pso_manifest.tsv'],tree,logs/'device-pipelines-mac.log',
-            dict(env,TOTK_SHADER_CACHE=str(mac),TOTK_SHADER_SEED_DIR=str(seed),TOTK_DEBUG_LOG='1'))
+    # Two runs of the Mac binary's mode: the first records the patched variants the runtime compiles from source
+    # (variant-scan/variants), device_pipelines.py --variants compiles them for the device into the seed, and the second
+    # makes every pipeline from the seed's libraries, those variants included. Both caches are kept between builds.
+    lists_args=[lists/'pso_title.tsv',lists/'pso_list.tsv',seed/'pso_manifest.tsv']
+    want=hashlib.sha256((seed/'seed-manifest.json').read_bytes()+(lists/'pso_list.tsv').read_bytes()+(lists/'pso_title.tsv').read_bytes()).hexdigest()
+    # Under its own name: the game lock takes any totk-native* process for a game that does not use it (runtime/game_slot.c
+    # pid_is_game), and the player's game waited until this packaging step ended (2026-10-29). It is a tool, not a game.
+    tool=host.with_name('ios-pipeline-archive'); tool.unlink(missing_ok=True); clone(host,tool)
+    def mac_pipelines(folder,log):
+        stamp=folder/'seed.txt'
+        if not (stamp.is_file() and stamp.read_text().strip()==want): shutil.rmtree(folder,ignore_errors=True)   # pipelines of other shaders or lists
+        folder.mkdir(parents=True,exist_ok=True)
+        run([tool,rewritten,'pipeline-archive',*lists_args],tree,logs/log,dict(env,TOTK_SHADER_CACHE=str(folder),TOTK_SHADER_SEED_DIR=str(seed),TOTK_DEBUG_LOG='1'))
         stamp.write_text(want+'\n')
-        print(f'pipelines: made on the Mac in {time.time()-t0:.0f} s; compiling them for {", ".join(gpus)}',flush=True)
+    t0=time.time()
+    if gpus:   # without the last build's variant libraries, so the first run compiles and records every variant it meets
+        for p in seed.glob('variant-*'): p.unlink()
+        mac_pipelines(pipe_work/'variant-scan','device-pipelines-scan.log')
+    run([sys.executable,ios/'tools/device_pipelines.py','--variants',pipe_work/('variant-scan/variants' if gpus else 'none'),'--seed',seed,'--cache',pipe_work,
+         '--sdk',sdk_name],tree,logs/'device-variants.log',env)
+    if gpus:
+        v=json.loads((logs/'device-variants.log').read_text().strip().splitlines()[-1])
+        mac_pipelines(pipe_work/'mac-cache','device-pipelines-mac.log')
+        print(f"pipelines: made on the Mac in {time.time()-t0:.0f} s, with {v['variants']} variants compiled for the device ({v['compiled']} new, "
+              f"{v['failed']} failed); compiling them for {', '.join(gpus)}",flush=True)
     t0=time.time()
     run([sys.executable,ios/'tools/device_pipelines.py','--mac',pipe_work/'mac-cache/pipelines','--seed',seed,'--cache',pipe_work,'--sdk',sdk_name,
          *[x for g in gpus for x in ('--arch',g)]],tree,logs/'device-pipelines.log',env)
     if gpus:
         done=json.loads((logs/'device-pipelines.log').read_text().strip().splitlines()[-1])
         for r in done['archs']: print(f"pipelines: {r['arch']}: {r['pipelines']} ({r['compiled']} compiled, {r['kept']} kept from earlier builds, "
-                                      f"{r['failed']} failed) in {time.time()-t0:.0f} s; {done['library from source']} use shaders the device compiles itself")
+                                      f"{r['failed']} failed) in {time.time()-t0:.0f} s; {done['library from source']} still use shaders the device compiles itself")
     # What the device reads: the seed and the two lists. With --image-outside it goes beside the app (<out>-shader-seed),
     # for install_device.py to put into Documents/GameData once per content (main.m); unchanged content is not copied again.
     fingerprint=hashlib.sha256(b''.join((d/n).read_bytes() for d,n in [(seed,'seed-manifest.json'),(seed,'shader_map.tsv'),
-                                        (lists,'pso_list.tsv'),(lists,'pso_title.tsv')]+[(seed,f'pipelines-{g}.tsv') for g in gpus])).hexdigest()
+                                        (lists,'pso_list.tsv'),(lists,'pso_title.tsv')]+[(seed,f'pipelines-{g}.tsv') for g in gpus])
+                         +''.join(sorted(p.name for p in seed.glob('variant-*'))).encode()).hexdigest()
     seed_out=out.with_name(out.stem+'-shader-seed') if a.image_outside else res/'shader-seed'
     stamp=seed_out/'fingerprint.txt'
     if not (a.image_outside and stamp.is_file() and stamp.read_text().strip()==fingerprint):

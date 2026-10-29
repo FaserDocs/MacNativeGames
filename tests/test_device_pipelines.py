@@ -79,6 +79,32 @@ class Compile(unittest.TestCase):
         self.assertEqual(list(self.seed.glob('pipelines-*')), [])
 
 
+class Variants(unittest.TestCase):
+    """The patched variants the runtime compiles from source, compiled for the device into the seed by their source's hash."""
+    def test_recorded_sources_become_seed_libraries_and_stale_ones_go(self):
+        import hashlib
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d); seed, rec, cache = root/'seed', root/'variants', root/'cache'
+            seed.mkdir(); rec.mkdir()
+            src = b'fragment float4 f() { return 1; }'; digest = hashlib.sha256(src).hexdigest()
+            (rec/f'{digest}.metal').write_bytes(src)
+            (rec/f'{"0" * 64}.metal').write_bytes(b'renamed')    # its name is not its hash: left out
+            (seed/'variant-old.metallib').write_bytes(b'old')
+            calls = []; real_run = subprocess.run
+            def fake_run(cmd, **kw):
+                if cmd[0] == 'cp': return real_run(cmd, **kw)
+                calls.append(cmd)
+                if '--version' in cmd: return subprocess.CompletedProcess(cmd, 0, 'metal 1\n', '')
+                Path(cmd[cmd.index('-o') + 1]).write_bytes(b'lib')
+                return subprocess.CompletedProcess(cmd, 0, '', '')
+            with mock.patch.object(device_pipelines.subprocess, 'run', fake_run):
+                r = device_pipelines.variants(rec, seed, cache, 'iphoneos', {})
+                self.assertEqual(r, {'variants': 1, 'compiled': 1, 'kept': 0, 'failed': 0})
+                self.assertIn('-fmetal-math-mode=safe', next(c for c in calls if '-c' in c))   # the seed's own options
+                self.assertEqual(device_pipelines.variants(rec, seed, cache, 'iphoneos', {})['kept'], 1)
+            self.assertEqual(sorted(p.name for p in seed.iterdir()), [f'variant-{digest}.metallib'])
+
+
 class Devices(unittest.TestCase):
     def test_only_wired_iphones_and_ipads_by_their_gpu(self):
         devices = [{'hardwareProperties': {'platform': 'iOS', 'productType': 'iPhone14,7'}, 'deviceProperties': {'name': 'phone'},

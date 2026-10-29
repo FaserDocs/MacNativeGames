@@ -11,13 +11,19 @@ the results into the seed, flat (a pushed seed is one stream of files: install_d
   pipelines-<arch>.json                 schema, chain, arch: the runtime takes them only when all three match
                                         (totk_pipeline_archive.h par_load_prebuilt)
 
-A pipeline whose functions come from a library the seed does not have (a variant the runtime compiles from source) is
-left out; the device builds it on its first start. Results are kept by the content of their pipeline script and the
-compiler (<cache>/<arch>/), so a build whose lists and shaders did not change compiles nothing again.
+--variants <folder>: first, the patched variants (border colours, tile reads, ...) the runtime compiles from source at
+run time, recorded by a first run of that mode (nvn_mtl.m variant_record: <SHA-256 of the source>.metal), are compiled
+for the device into the seed as variant-<SHA-256>.metallib, with the seed's own options (compile_seed.py METAL_FLAGS).
+The device loads them instead of compiling them (nvn_mtl.m variant_library_seed), and a second run of the mode makes
+their pipelines from them, so these can be compiled for the GPU too (BotW 1.6.0: 1,111 pipelines, 58 s on an iPhone
+14's first start before). A pipeline whose functions still come from a library the seed does not have is left out;
+the device builds it on its first start. Results are kept by the content of their pipeline script or source and the
+compiler (<cache>/<arch>/, <cache>/variant-libs/), so a build whose lists and shaders did not change compiles nothing again.
 Measured: BotW 1.6.0, 13,760 pipelines; metal-tt takes about 0.4 s per pipeline on an M4, run on every core.
 """
 import argparse, concurrent.futures, hashlib, json, os, shutil, subprocess, sys, tempfile
 from pathlib import Path
+from compile_seed import METAL_FLAGS
 
 SCHEMA = 5   # totk_pipeline_archive.h PAR_SCHEMA
 
@@ -76,22 +82,57 @@ def script_of(archive, sdk, scripts, env):
     return json.loads(kept.read_text())
 
 
+def place(src, dst):
+    if subprocess.run(['cp', '-c', str(src), str(dst)], capture_output=True).returncode: shutil.copyfile(src, dst)
+
+
+def variants(folder, seed, cache, sdk, env):
+    """The recorded variant sources compiled into the seed as variant-<SHA-256>.metallib (see the top); the last build's
+    that are not recorded now are removed. Returns the report."""
+    for old in seed.glob('variant-*'): old.unlink()
+    sources = [p for p in sorted(folder.glob('*.metal')) if len(p.stem) == 64 and hashlib.sha256(p.read_bytes()).hexdigest() == p.stem] if folder.is_dir() else []
+    compiler = subprocess.run(['xcrun', '-sdk', sdk, 'metal', '--version'], env=env, check=True, capture_output=True, text=True).stdout
+    kept_dir = cache / 'variant-libs'; kept_dir.mkdir(parents=True, exist_ok=True)
+    def compile_one(src):
+        kept = kept_dir / (hashlib.sha256('\0'.join([src.stem, sdk, compiler, *METAL_FLAGS]).encode()).hexdigest() + '.metallib')
+        how = 'kept'
+        if not kept.is_file():
+            with tempfile.TemporaryDirectory(dir=kept_dir) as d:
+                air, lib = Path(d) / 'v.air', Path(d) / 'v.metallib'
+                r = subprocess.run(['xcrun', '-sdk', sdk, 'metal', *METAL_FLAGS, '-c', str(src), '-o', str(air)], env=env, capture_output=True, text=True)
+                if not r.returncode: r = subprocess.run(['xcrun', '-sdk', sdk, 'metallib', str(air), '-o', str(lib)], env=env, capture_output=True, text=True)
+                if r.returncode or not lib.is_file(): return 'failed'
+                os.replace(lib, kept)
+            how = 'compiled'
+        place(kept, seed / f'variant-{src.stem}.metallib')
+        return how
+    counts = {'compiled': 0, 'kept': 0, 'failed': 0}
+    with concurrent.futures.ThreadPoolExecutor(max_workers=os.cpu_count() or 4) as pool:
+        for how in pool.map(compile_one, sources): counts[how] += 1
+    return {'variants': len(sources), **counts}
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument('--mac', type=Path, required=True, help='the pipeline-archive mode\'s pipelines folder')
+    ap.add_argument('--mac', type=Path, help='the pipeline-archive mode\'s pipelines folder (needed with --arch)')
     ap.add_argument('--seed', type=Path, required=True, help='the device seed (seed-manifest.json, the metallibs)')
     ap.add_argument('--cache', type=Path, required=True, help='kept scripts and compiled files, outside the app')
     ap.add_argument('--sdk', default='iphoneos')
     ap.add_argument('--arch', action='append', default=[], help='GPU architecture, e.g. applegpu_g14p (iPhone 14); none: remove them')
+    ap.add_argument('--variants', type=Path, help='only compile the recorded variant sources of this folder into the seed (none: remove them)')
     a = ap.parse_args()
     env = os.environ.copy()
     seed = a.seed.resolve()
+    if a.variants:
+        print(json.dumps(variants(a.variants, seed, a.cache, a.sdk, env))); return
     for old in seed.glob('pipelines-*'):   # this build's set replaces the last one's
         old.unlink()
     if not a.arch:
         print(json.dumps({'archs': []})); return
+    if not a.mac: ap.error('--arch needs --mac')
     manifest = json.loads((seed / 'seed-manifest.json').read_text())
     libs = {digest.upper(): name for name, digest in manifest['files'].items() if name.endswith('.metallib')}
+    for p in seed.glob('variant-*.metallib'): libs[hashlib.sha256(p.read_bytes()).hexdigest().upper()] = p.name
     compiler = hashlib.sha256(Path(tool(a.sdk, 'metal-tt', env)).read_bytes()).hexdigest()
     scripts = a.cache / 'scripts'; scripts.mkdir(parents=True, exist_ok=True)
     files = sorted(p for p in a.mac.glob('*.metalarchive') if (p.with_suffix('.keys')).is_file())
@@ -132,8 +173,7 @@ def main():
                 counts[how] += 1
                 if why: reasons[why] = reasons.get(why, 0) + 1
                 if kept:
-                    dst = seed / f'pipelines-{arch}-{name}.metalarchive'
-                    if subprocess.run(['cp', '-c', str(kept), str(dst)], capture_output=True).returncode: shutil.copyfile(kept, dst)
+                    place(kept, seed / f'pipelines-{arch}-{name}.metalarchive')
                     index += [f'{k}\t{name}' for k in keys]
                 if i % 1000 == 0: print(f'{arch}: {i}/{len(jobs)}', flush=True)
         (seed / f'pipelines-{arch}.tsv').write_text('\n'.join(index) + '\n')
