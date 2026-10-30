@@ -15,8 +15,8 @@ keys and saves are never committed (see `.gitignore`).
 | 1 | Code rewritten for Apple silicon; merged RomFS | done 2026-10-29 |
 | 2 | A runtime fork that boots to `nnMain` | done 2026-10-29 |
 | 3 | Follow every unknown service / command / NVN call until the first `nvnQueuePresentTexture` | **done 2026-10-29**: first presented frame at 0.196 s (`nvnQueuePresentTexture` → the screen); the game then runs at its own 30 fps pacing — 10 800+ frames over 6 min verified |
-| 4 | Playable: picture, audio (Wwise), input, saves; 30/60 fps and resolution patches | |
-| 5 | TotK-grade polish: app, presets, shader seed, shared shader list, MetalFX | |
+| 4 | Playable: picture, audio (Wwise), input, saves; 30/60 fps and resolution patches | **done 2026-10-30**: playable at 60 fps (14-site patch) with a 1920x1080 internal resolution (9-site patch), tested across several chapters by the player; settings panel, keyboard/mouse/controller remapping and saves verified; frame interpolation lands here but is still under development at 30 fps modes |
+| 5 | TotK-grade polish: app, presets, shader seed, shared shader list, MetalFX | **in progress**: self-contained app with presets, shader seed and the TotK-style straight-in launch done; shared shader list contribution and the remaining polish open |
 
 ## Log
 
@@ -793,3 +793,33 @@ from it) and the boot is unchanged. The launcher's data folder resolves to the s
 `/Applications/Astral Chain.app/Contents/Resources/work`, both patches applied, seed imported 1062/1062, swapchain
 1920x1080, saves in `MacNativeGames/ALC/profile/save/…`, and the game picture on screen within 4.7 s of the first
 start (the import and first-run compiles included).
+
+### 2026-10-30: player self-test results, and what is still open
+
+The player took the new build through several chapters and reported back; recorded here as the state of the port:
+
+- **1080p holds across several chapters**: no picture errors, no crashes (the 9-site resolution patch).
+- **The in-game settings panel, key remapping (keyboard, mouse, controller) and mouse mode** work in play; **rumble and
+  gyro were not exercised** yet.
+- **Frame interpolation is not ready**: 60 fps is the recommended mode. Interpolated frames still wash in gameplay
+  (the canvas is HDR; the fix is to snapshot the presented texture — known issue above), and the 30 fps choices are
+  worse than that: **"30+30" and the 30 fps lock still run slow**.
+
+**Root cause of the slow 30 fps modes (found in the player's log, 820 occurrences):**
+```
+[alc] step floor: raising the text to RW failed
+```
+The adaptive logic-step floor (the 60 fps patch's three immediates) is rewritten at run time through
+`mach_vm_protect`. That works when the game binary is the one this folder builds, but **inside the ad-hoc signed
+app it does not**: macOS enforces W^X on a signed executable's pages, so a page that the loader sealed read-execute
+cannot be made writable again. The floor stays at 0.5 while the pace drops to 33.3 ms, and the game runs at half
+speed — exactly what the player saw. The 25.99 s cold start note above is unrelated.
+
+**Next session:** stop rewriting the guest text at run time. Two workable shapes: (a) apply the floor once at load,
+while the text is still writable and before `seal()`, choosing it from the modes the launcher starts with and
+telling the player a mode change needs a restart; or (b) replace the three immediates at load with stubs in the
+existing code cave that read the floor from a writable word, so later changes only touch data. (b) keeps run-time
+switching and is the intended fix.
+
+Status of the port, for the record: **community port, early** — playable at 60 fps with a 1080p internal resolution;
+interpolation and the 30 fps modes are still being worked on.
