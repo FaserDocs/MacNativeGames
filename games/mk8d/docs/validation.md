@@ -166,7 +166,14 @@ Both runs printed the one known `[RED] texture ID … not registered` line and n
 
 **By hand, then fixed.** The player tried 2P twice, with a DualSense, and both times the game went back from the character select. The logs show `DM_KBD_PLAYER=shared` and `2 to 2 players wanted, 1 connected`: the Keyboard row was among the Advanced settings, which the window keeps folded, so it was never changed. The row is now among the basic settings, under Controls (`cfc935c`). The app was built again (only the packing ran) and installed, and one headless 2P run gave the same answer as before.
 
-Not checked: two players by hand (the keyboard and a DualSense with Keyboard set to Own player), the new row drawn in the settings window, how the single-player modes treat a controller that is player 2, and this game's keyboard, Mii and error applets.
+**By hand, after the fix.** The player then tested on that app, in full screen with a DualSense.
+
+| Session | From the host log |
+|---|---|
+| 2P, 13:27 | Keyboard set to Own player in the window: `DM_KBD_PLAYER=own (changed)`, `the keyboard is player 1, each controller a player of its own from player 2 on`. The DualSense was player 2 (npad 1), with gyro. The player reached the 2P character select and reported that it works; the draws per frame rose to about 320 there (262 with the one player of the scripted runs). The game opened no controller applet in this session, since two players were connected. No 2P race was played |
+| 1P, 13:28–13:41 | Keyboard back on Plays with player 1, the DualSense player 1. One more race session by hand: 47,400 frames, **47,382 on screen**, 74 dropped, p99 over 16.7 ms in 5 of 158 windows (33.3 ms each). Footprint 2.32–3.00 GB, 0 audio underruns in 79 reports, 15 save commits, no focus change, the one known red line, host exit 0 |
+
+Not checked: a race with two players, how the single-player modes treat a controller that is player 2, and this game's keyboard, Mii and error applets.
 
 ## Known limitations
 
