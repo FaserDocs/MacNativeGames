@@ -22,6 +22,7 @@ REPO_ROOT = GAME.parents[1]
 WORKSPACE_ROOT = GAME.parents[2]
 sys.path.insert(0, str(REPO_ROOT))
 from games.acnh.prepare import prepared_profile
+from games.acnh.tools.prepare_fps import verify_assets
 # The shader translator is carried in this folder (prebuilt/macos-arm64/README.md) and pinned by its .sha256.
 TRANSLATOR = GAME / "prebuilt/macos-arm64/totk_xlate"
 TRANSLATOR_SHA256 = GAME / "prebuilt/macos-arm64/totk_xlate.sha256"
@@ -113,6 +114,23 @@ def verify_inputs(work: Path, prepared: Path, fonts: Path):
     marker = ("MNG_ACNH_VERSION:" + expected["display_version"]).encode()
     if marker not in runtime_bytes:
         raise ValueError("Runtime was built for another ACNH version")
+    fps_sha = host.get("fps_manifest_sha256")
+    if fps_sha:
+        fps_dir = work / "build/fps60"
+        manifest = verify_assets(fps_dir)
+        if (expected["cnmt_version_raw"] != 2097152
+                or manifest["original_main_sha256"] != expected["exefs_sha256"]["main"]
+                or manifest["rewritten_main_sha256"] != expected["rewritten_sha256"]["main"]
+                or manifest["original_romfs_sha256"] != expected["romfs_sha256"]):
+            raise ValueError("FPS assets belong to another game/version")
+        fps_id = identity(fps_dir / "manifest.json")
+        if fps_id["sha256"] != fps_sha or ("MNG_ACNH_FPS_ASSETS:" + fps_sha).encode() not in runtime_bytes:
+            raise ValueError("Runtime and FPS asset identities differ")
+        verified["fps60/manifest.json"] = fps_id
+        for name, row in manifest["files"].items():
+            verified["fps60/" + name] = row
+    elif b"MNG_ACNH_FPS_ASSETS:" in runtime_bytes:
+        raise ValueError("FPS runtime needs its matching asset bundle")
 
     # 2. Shader translation tools
     verified["prebuilt/macos-arm64/totk_xlate"] = pinned_translator()
@@ -247,6 +265,9 @@ def package(work: Path, prepared: Path, fonts: Path, output: Path, icon: Path = 
 
         # 2. Bundle game runtime and tools
         clone(work / "build/acnh-native", game / "build/acnh-native")
+        for name in verified:
+            if name.startswith("fps60/"):
+                clone(work / "build" / name, game / name)
         clone(TRANSLATOR, game / "build/shader-service/totk_xlate")   # where totk_shader_rt.m looks for it
         if "build/spirv-cross/spirv-cross" in verified:
             clone(work / "build/spirv-cross/spirv-cross", game / "build/spirv-cross/spirv-cross")
@@ -294,6 +315,9 @@ def package(work: Path, prepared: Path, fonts: Path, output: Path, icon: Path = 
         # 7. Bundle licenses
         notices = resources / "Licenses"
         notices.mkdir(parents=True, exist_ok=True)
+        if "fps60/manifest.json" in verified:
+            clone(work / "build/fps60/LICENSE", notices / "ACNH-SpeedFix-CC-BY-NC-4.0.txt")
+            clone(work / "build/fps60/NOTICE", notices / "ACNH-SpeedFix-NOTICE.txt")
         for path in sorted((GAME / "third_party").rglob("*")):
             if path.is_file() and (path.name.lower().startswith("license") or "license" in path.name.lower()):
                 dest = notices / path.relative_to(GAME / "third_party")

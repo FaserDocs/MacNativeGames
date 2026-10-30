@@ -83,6 +83,11 @@ int main(int argc, char **argv) {
     setenv("TOTK_GPU_BLOCKRT", "1", 1);
     setenv("DM_PRESENT_HZ", "60", 1);
     setenv("TOTK_UNCAPPED", "0", 1);
+    unsetenv("DM_PRESENT_INTERVAL"); /* The saved 30/60 mode owns presentation cadence. */
+    char fps_assets[PATH_MAX], fps_manifest[PATH_MAX];
+    join(fps_assets, game, "fps60"); join(fps_manifest, fps_assets, "manifest.json");
+    if (!access(fps_manifest, R_OK)) setenv("ACNH_FPS_ASSETS", fps_assets, 1);
+    else unsetenv("ACNH_FPS_ASSETS");
     setenv("DM_PRESERVE_INVARIANCE", "1", 1);
     setenv("DM_NVN_GPU_CODE_MAX_MINOR", "31", 1);
     setenv("TOTK_PROFILE_DIR", profile, 1);
