@@ -117,8 +117,8 @@ def make_seed(tree, work, game, version, logs, env):
 
 def replace_seed(tree, tmp, version, game):
     """The new seed and its libraries in the app being assembled (tmp), in place of the old ones (moved out of it and
-    deleted in the background: 128,000 files), and the seed's aliases with the game data."""
-    new_res, new_data = tmp / 'Contents/Resources/totk', tmp / f'Contents/Resources/totk/build/game-data/{version}'
+    deleted in the background: 128,000 files)."""
+    new_res = tmp / 'Contents/Resources/totk'
     for rel in ('build/shader-seed', 'build/shader-libs'):
         old = new_res / rel
         if old.exists():
@@ -128,10 +128,6 @@ def replace_seed(tree, tmp, version, game):
             old.rename(aside)
             build_app.remove_in_background(aside)
     build_app.place_seed(tree, new_res, version, game=game)
-    aliases = tree / f'build/shader-seed/{version}.aliases.tsv'
-    (new_data / 'shader-seed.aliases.tsv').unlink(missing_ok=True)
-    if aliases.is_file():
-        clone(aliases, new_data / 'shader-seed.aliases.tsv')
 
 
 def config(path):
@@ -299,21 +295,6 @@ def game_data(tree, res, version, logs, env):
     return tree / f'build/game-data/{version}'
 
 
-def seed_aliases(tree, res, version, new_data):
-    """The seed's aliases the warm-up lists are renamed with (build_app.place_runtime): the app's copy, or the work folder's
-    when its seed is the app's (an older app has no copy). False when not known: the app's lists are then kept."""
-    if (res / f'build/game-data/{version}/shader-seed.aliases.tsv').is_file():
-        return True
-    seed = tree / f'build/shader-seed/{version}'
-    if not ((seed / 'seed-manifest.json').is_file() and (res / 'build/shader-seed/seed-manifest.json').is_file()
-            and sha256(seed / 'seed-manifest.json') == sha256(res / 'build/shader-seed/seed-manifest.json')):
-        return False
-    aliases = seed.with_name(seed.name + '.aliases.tsv')
-    if aliases.is_file():
-        clone(aliases, new_data / 'shader-seed.aliases.tsv')
-    return True
-
-
 def main(argv):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument('app', type=Path, help='the app build_app.py made (Tears of the Kingdom.app, Breath of the Wild.app)')
@@ -371,9 +352,9 @@ def main(argv):
                 clone(data / name, new_data / name)
         if args.seed:
             replace_seed(tree, tmp, version, game)
-        lists = True if args.seed else seed_aliases(tree, res, version, new_data)
+        lists = (new_res / 'build/shader-seed/shader-keys.json').is_file()   # the seed resolve names the rows by
         if not lists:
-            say('   the startup shader seed of the app is not the work folder\'s, so the app keeps its warm-up lists')
+            say('   the app\'s startup shader seed predates its shader-keys.json, so the app keeps its warm-up lists (--seed makes a new one)')
         build_app.place_runtime(tree, tmp, version, logs, game=game, lists=lists)
         record_commit(tmp)
         probe_runtime(tmp, version, logs)

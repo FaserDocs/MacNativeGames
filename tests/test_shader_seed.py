@@ -327,7 +327,7 @@ class ShaderKeyScope(unittest.TestCase):
             self.assertEqual(self.tree(root/'seed'), self.tree(fresh/'seed'))
             self.assertEqual(manifest['files'], full['files'])
 
-    def test_a_listed_state_another_variant_serves_is_not_translated_but_named_in_the_aliases(self):
+    def test_a_listed_state_another_variant_serves_is_not_translated(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
             rows = list(seed.bnsh_shaders(bnsh()))
@@ -337,8 +337,7 @@ class ShaderKeyScope(unittest.TestCase):
             served = rows[0][0]+'-'+seed.suffix({**seed.ANSWERS, 'tex': {'5': '3d'}})
             self.assertNotIn(served, asked)
             self.assertIn(rows[0][0]+'-'+seed.suffix({**seed.ANSWERS, 'tex': {'1': 'cube'}}), asked)
-            aliases = (root/'seed.aliases.tsv').read_text().splitlines()
-            self.assertEqual(aliases, [served+'\t'+rows[0][0]+'-'+seed.SUFFIX])
+            self.assertFalse((root/'seed.aliases.tsv').exists())   # shader_list.py resolve names such rows by their bind state
             self.assertEqual(manifest['shaders'], 4)
 
     def test_a_shader_sampling_shadow_maps_gets_its_depth_bound_variant_without_a_listed_row(self):

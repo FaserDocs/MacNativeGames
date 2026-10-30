@@ -21,6 +21,12 @@ void dm_gfx_set_flag(const char *name, int value) {
     else if (!strcmp(name, "mfx_upscale")) mfxup_set(value);
     else abort();
 }
+/* gfx/nvn/totk_ssao.h's row calls (PR #1316): whether this run patched the AO shaders, and the level last set. */
+static int fakeSsaoLive = 1, fakeSsaoSet = -1, fakeSsaoStart = -1;
+void dm_gfx_ssao_start(int pct) { fakeSsaoStart = pct; }
+int dm_gfx_ssao_locked(void) { return 0; }
+int dm_gfx_ssao_live(void) { return fakeSsaoLive; }
+void dm_gfx_ssao_set(int pct) { if (fakeSsaoLive) fakeSsaoSet = pct; }
 /* runtime/gamepad.m's controller type and mouse mode without GameController: a DualSense is connected. */
 static int fakePadType = GAMEPAD_TYPE_AUTO, fakePadDetected = GAMEPAD_TYPE_PLAYSTATION, fakeMouse;
 int runtime_gamepad_type_set(int type) { return fakePadType = type; }
@@ -259,7 +265,7 @@ int main(int argc, const char **argv) { @autoreleasepool {
     runtime_input_key_synthetic(18, 1); runtime_input_key_synthetic(18, 1); tick(); runtime_input_key_synthetic(18, 0); tick();
     assert(settingsOpen && fakeSettingsCapture && settingsPanel && !settingsPanel.hidden && settingsPanel.superview == window.contentView);
     assert(NSContainsRect(window.contentView.bounds, settingsPanel.frame));
-    assert(settingsPanel.allRows.count == 14);
+    assert(settingsPanel.allRows.count == 15);
 
     /* FPS graph: a switch (here off at start; frontend.m turns it on when nothing is saved), kept in fps-graph.txt
        that both games share (user 2026-10-29). */
@@ -363,6 +369,18 @@ int main(int argc, const char **argv) { @autoreleasepool {
     /* Switches. */
     assert(!switched(@"Edge smoothing")); flip(@"Edge smoothing", YES); assert(taa_enabled() && switched(@"Edge smoothing"));
     flip(@"Edge smoothing", NO); assert(!taa_enabled());
+    /* Stronger ambient occlusion (PR #1316): off by default; every level acts at once (the Mac's shaders always carry the
+       parameters) and is saved; a run without them (TOTK_SSAO=0) shows off, greyed out (rows are made at each opening). */
+#if defined(TOTK_GAME_V143) || defined(GAME_BOTW190)
+    shows(@"Stronger ambient occlusion", @"Off (as the game has it)"); assert(fakeSsaoStart == -1);
+    pick(@"Stronger ambient occlusion", @"1.5×"); assert(settingsSsao == 150 && fakeSsaoSet == 150 && !strcmp(savedName, "ssao.txt") && !strcmp(savedWord, "150"));
+    pick(@"Stronger ambient occlusion", @"2×"); assert(fakeSsaoSet == 200 && !strcmp(savedWord, "200"));
+    pick(@"Stronger ambient occlusion", @"Off (as the game has it)"); assert(!settingsSsao && fakeSsaoSet == 0 && !strcmp(savedWord, "off"));
+    press(18); fakeSsaoLive = 0; press(18); assert(settingsOpen && !menu(@"Stronger ambient occlusion").enabled);
+    press(18); fakeSsaoLive = 1; press(18); assert(settingsOpen && menu(@"Stronger ambient occlusion").enabled);
+#else
+    shows(@"Stronger ambient occlusion", @"Not in this version"); assert(!menu(@"Stronger ambient occlusion").enabled);
+#endif
     assert(!switched(@"Mouse")); flip(@"Mouse", YES); assert(fakeMouse && switched(@"Mouse")); flip(@"Mouse", NO); assert(!fakeMouse);
 
     /* The DualSense bow trigger: a switch; greyed out while TOTK_DUALSENSE_TRIGGERS or a test session decides, and on a
@@ -419,14 +437,14 @@ int main(int argc, const char **argv) { @autoreleasepool {
     /* Pages: Display, Input and Key bindings; the page shown last opens again. */
     press(18); assert(settingsOpen);
     [settingsPanel selectPage:SETTINGS_PAGE_DISPLAY];
-    assert(settingsPanel.rows.count == 7 && [settingsPanel.rows[0].title isEqualToString:@"Overlay"]);
+    assert(settingsPanel.rows.count == 8 && [settingsPanel.rows[0].title isEqualToString:@"Overlay"]);
     /* The display page's bottom right: contribute shaders and star the project, after the rows for a controller; the
        version stays clear of them; a result shows for a moment where the version is. */
     NSButton *contribute = settingsPanel.displayButtons[1], *starButton = settingsPanel.displayButtons[0];
     assert([contribute.title isEqualToString:@"Contribute shaders and pipelines"] && [starButton.title isEqualToString:@"⭐ Star the project"]);
     assert(!contribute.hidden && !starButton.hidden && NSMaxX(contribute.frame) < NSMinX(starButton.frame) && NSMaxX(starButton.frame) <= settingsPanel.frame.size.width - 14);
     assert(NSMaxX(settingsPanel.versionLabel.frame) <= NSMinX(contribute.frame) && contribute.frame.origin.y < 34 && starButton.frame.origin.y < 34);
-    assert(settingsPanel.controllerTargets.count == 9 && settingsPanel.controllerTargets[7] == contribute && settingsPanel.controllerTargets[8] == starButton);
+    assert(settingsPanel.controllerTargets.count == 10 && settingsPanel.controllerTargets[8] == contribute && settingsPanel.controllerTargets[9] == starButton);
     NSString *versionText = settingsPanel.versionLabel.stringValue;
     [settingsPanel note:@"Thank you!"]; assert([settingsPanel.versionLabel.stringValue isEqualToString:@"Thank you!"]);
     settingsPanel.versionLabel.stringValue = versionText; settingsPanel.versionLabel.frame = NSMakeRect(18, 9, 230, 16);

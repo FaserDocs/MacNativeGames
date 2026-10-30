@@ -1219,33 +1219,35 @@ def game_data_files(version):
 def place_game_data(tree, res, version):
     """build/game-data/<version>: what the runtime reads from the player's files at start instead of having it compiled in
     (module tables, RomFS / add-on content / font sizes and hashes; games/totk/runtime/game_data.h), at the same place in
-    the app. With it the seed's aliases, which place_runtime needs again when update_runtime.py exports a newer list."""
+    the app."""
     data, dst = tree / f'build/game-data/{version}', res / f'build/game-data/{version}'
     missing = [name for name in game_data_files(version) if not (data / name).is_file()]
     if missing:
         raise BuildError(f'{data}: {", ".join(missing)} missing (games/totk/Makefile game-data-{version})')
     for name in game_data_files(version):
         clone(data / name, dst / name)
-    aliases = tree / f'build/shader-seed/{version}.aliases.tsv'   # listed variants the seed carries under another name
-    if aliases.is_file():
-        clone(aliases, dst / 'shader-seed.aliases.tsv')
+
+
+def resolve_lists(tree, res, game, logs):
+    """The warm-up lists of the app (build/pso_manifest.tsv, pso_title.tsv): the shared shader list's rows of this game
+    version, each variant named as the app's seed serves its bind state (shader_list.py resolve)."""
+    shared = tree.parent / 'botw/assets/shader_list.tsv' if game == 'botw' else tree / 'assets/shader_list.tsv'
+    run([tree/'.venv/bin/python', 'scripts/shader_list.py', 'resolve', res/'build/shader-seed', shared,
+         res/'build/pso_manifest.tsv', res/'build/pso_title.tsv'], logs/'shader-list-resolve.log', cwd=tree)
 
 
 def place_runtime(tree, app, version, logs, *, game='totk', lists=True):
     """The parts of the app made from this repository alone, which update_runtime.py replaces in an installed app: the
     game binary, the launcher, the shader tools and the warm-up lists exported from the shared shader list. Everything
     else in the app comes from the player's game files (place_game_data, the rewritten modules, the RomFS, the seed).
-    lists=False keeps the app's warm-up lists (update_runtime.py, when the seed's aliases are not known)."""
+    lists=False keeps the app's warm-up lists (update_runtime.py, when the app's seed predates its shader-keys.json);
+    else resolve_lists makes them anew."""
     res = app / 'Contents/Resources/totk'   # the launcher's game folder, for both games (app/launcher.m)
     clone(tree / ('build/totk-native' if version == 'v0' else f'build/totk-native-{version}'), res / 'build/totk-native')
     clone(tree / 'build/spirv-cross/spirv-cross', res / 'build/spirv-cross/spirv-cross')
     clone(tree / 'prebuilt/macos-arm64/totk_xlate', res / 'build/shader-service/totk_xlate')   # where totk_shader_rt.m looks for it
-    for name in ('pso_manifest.tsv', 'pso_title.tsv') if lists else ():   # from the shared shader list (games/totk/Makefile)
-        clone(tree / 'build' / name, res / 'build' / name)
-    aliases = res / f'build/game-data/{version}/shader-seed.aliases.tsv'
-    if lists and aliases.is_file():
-        run([tree/'.venv/bin/python', 'scripts/shader_list.py', 'rename', aliases, res/'build/pso_manifest.tsv',
-             res/'build/pso_title.tsv'], logs/'shader-list-rename.log', cwd=tree)
+    if lists:
+        resolve_lists(tree, res, game, logs)
     clone(tree / 'build/app-launcher', app / f'Contents/MacOS/{APPS[game][2]}')
 
 

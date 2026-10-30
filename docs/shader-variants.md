@@ -55,9 +55,10 @@ shader at load.
 
 Tears of the Kingdom's seed now translates every shader the build finds for the default bind state (28,771 in 1.4.3,
 up from the 12,472 of the startup packages), and for a shader with compare slots also the variant with all of them
-bound to depth textures. A shared-list row is translated only when no variant already made serves its bind state; a
-row served by another variant goes into `<seed>.aliases.tsv`, and the packaging renames the warm-up rows through it
-(`shader_list.py rename`), since rows recorded on a player's Mac name the variant translated there.
+bound to depth textures. A shared-list row is translated only when no variant already made serves its bind state. The
+packaging names each warm-up row's variants as the seed serves their bind states (`shader_list.py resolve`, through the
+bind states the list keeps in its `A` rows), since rows recorded on a player's Mac name the variant by the bind state
+it was made for.
 
 Offline check (2026-10-22): of 2,681 variants the game translated on this Mac, the new translator gives identical MSL
 for every one with the same answers, and 2,641 (98.5 %) are served by the default or the depth-bound variant with

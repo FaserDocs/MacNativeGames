@@ -681,14 +681,6 @@ def plan(shaders, startup, listed, all_default=False):
     return jobs
 
 
-def write_aliases(path, aliases):
-    """<seed>.aliases.tsv: each listed variant the seed does not carry, because a variant it does carry serves the same
-    bind state, and that variant. The packaging renames the warm-up rows through it (shader_list.py rename), since
-    rows recorded on a player's Mac name the variant translated there."""
-    path.with_name(path.name+'.tmp').write_text(''.join(f'{old}\t{new}\n' for old, new in sorted(aliases.items())))
-    path.with_name(path.name+'.tmp').replace(path)
-
-
 def prepare(romfs, output, translator, spirv_cross, version, shader_list=None, modules=None, game='totk'):
     shader_list = shader_list or GAMES[game]['list']
     min_shaders = GAMES[game]['min_shaders']
@@ -728,7 +720,6 @@ def prepare(romfs, output, translator, spirv_cross, version, shader_list=None, m
     shaders.update(extra)
     print(f'{len(extra)} more shaders read where the shared list locates them (agl .sharcb, game module)', flush=True)
     jobs = plan(shaders, startup, listed, GAMES[game]['all_default'])
-    aliases = {}   # listed variant -> the variant serving its bind state (write_aliases)
     # One translator service per core. A shader's jobs (its default bind state, then its listed ones) run in order on
     # one service, because whether a listed job is translated and kept depends on that shader's earlier results; the
     # files each job writes are named after its own shader. The results are then taken in the order of `jobs`, so the
@@ -760,10 +751,7 @@ def prepare(romfs, output, translator, spirv_cross, version, shader_list=None, m
                     index, answers, variant, why = queue.pop(0)
                     stage, control, code, source = shaders[key]
                     if why != 'default':   # a variant made already serves this bind state, as the runtime would pick it
-                        serving = next((v for d, v in mine.items() if deps_match(json.loads(d), answers)), None)
-                        if serving:
-                            with lock:
-                                aliases[variant] = serving
+                        if any(deps_match(json.loads(d), answers) for d in mine):   # (shader_list.py resolve names rows so)
                             continue
                     reply = cache.take(variant, staging)
                     reused = reply is not None
@@ -789,8 +777,6 @@ def prepare(romfs, output, translator, spirv_cross, version, shader_list=None, m
                         if deps in mine:   # same deps as a variant already made: keep one
                             for name in (variant+'_b.metal', variant+'_b.json'):
                                 (staging/name).unlink(missing_ok=True)
-                            with lock:
-                                aliases[variant] = mine[deps]
                             continue
                         mine[deps] = variant
                         rows =[f'S\t{variant}_b\t'+str({'vs': 0, 'ps': 1, 'cs': 5}[stage])]
@@ -865,7 +851,6 @@ def prepare(romfs, output, translator, spirv_cross, version, shader_list=None, m
                   files={p.name: cache.digest(p.name, p) if p.name in linked else digest(p.read_bytes())
                          for p in sorted(staging.iterdir()) if p.name in wanted_final})
     (staging/'seed-manifest.json').write_text(json.dumps(report, indent=2)+'\n')
-    write_aliases(output.with_name(output.name+'.aliases.tsv'), {old: new for old, new in aliases.items() if new in completed})
     if output.exists():
         shutil.rmtree(output)
     staging.rename(output)

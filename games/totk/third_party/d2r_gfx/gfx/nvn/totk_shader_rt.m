@@ -368,7 +368,9 @@ static BOOL contrib_wanted(NSString *shader, NSString *variant) {
 /* nvn_mtl.m pso_contribute: the name a pipeline row gives "<variant>_b" so that another player's build has that variant.
    A variant the seed makes from the code alone keeps its name (the default bind state; the depth-bound one of a shadow-map
    shader, named after its depth slots only); any other is named as a build names a list row with its deps
-   (totk_contrib_listed_name), which the row the same variant added to the contribution file makes. */
+   (totk_contrib_listed_name). Every name but the default one also writes the V row of the deps it stands for, so the
+   shared list keeps the bind state behind it (shader_list.py A rows; 2026-10-30: rows naming variants whose bind states
+   the list had dropped could not be built, 6,855 of the Tears of the Kingdom list's). */
 NSString *totk_rt_portable_variant(NSString *name) {
     if (name.length < 66 || ![name hasSuffix:@"_b"]) return name;
     NSString *variant = [name substringToIndex:name.length - 2], *shader = [variant substringToIndex:64];
@@ -376,13 +378,14 @@ NSString *totk_rt_portable_variant(NSString *name) {
     pthread_mutex_lock(&g_rt_lock);
     NSDictionary *deps = nil;
     for (NSDictionary *v in variants_of(shader)) if ([v[@"variant"] isEqual:variant]) { deps = v[@"deps"]; break; }
-    pthread_mutex_unlock(&g_rt_lock);
-    if (![deps isKindOfClass:NSDictionary.class]) return name;
+    if (![deps isKindOfClass:NSDictionary.class]) { pthread_mutex_unlock(&g_rt_lock); return name; }
     NSMutableDictionary *depth = [NSMutableDictionary dictionary];
     NSDictionary *tex = [deps[@"tex"] isKindOfClass:NSDictionary.class] ? deps[@"tex"] : @{};
     for (NSString *slot in tex) if ([tex[slot] isEqual:@"*_depth"]) depth[slot] = @"*_depth";
-    if (depth.count && [variant isEqualToString:totk_contrib_listed_name(shader, @{@"tex": depth})]) return name;
-    return [totk_contrib_listed_name(shader, deps) stringByAppendingString:@"_b"];
+    NSDictionary *named = depth.count && [variant isEqualToString:totk_contrib_listed_name(shader, @{@"tex": depth})] ? @{@"tex": depth} : deps;
+    if (totk_contrib_path()) totk_contrib_add(shader, named);   // the bind state behind the name (under the lock its writers hold)
+    pthread_mutex_unlock(&g_rt_lock);
+    return named == deps ? [totk_contrib_listed_name(shader, deps) stringByAppendingString:@"_b"] : name;
 }
 int totk_rt_contrib_on(void) { return totk_contrib_path() != nil; }
 void totk_rt_contrib_line(NSString *line) {   // totk_contrib_add_line under the lock its other writers hold
