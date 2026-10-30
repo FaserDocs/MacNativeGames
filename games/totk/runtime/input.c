@@ -266,6 +266,14 @@ static void *input_file(void *arg) {
             char *end; double ms = strtod(line + 10, &end); if (end == line + 10 || ms < 0 || ms > 100) runtime_fail("framestep takes milliseconds (0 = real time)");
             runtime_frame_step_pin(ms);
 #if defined(TOTK_GAME_V143) && !TARGET_OS_IPHONE   /* high-frame-rate diagnostics (game_patches_v143.c) */
+        } else if (!strncmp(line, "lodscale ", 9)) {   /* "lodscale <K>": model detail distance x K (the settings panel's effects page, game_patches_v143.c) */
+            extern void runtime_lod_scale_set(double k);
+            char *end; double k = strtod(line + 9, &end); if (end == line + 9 || !(k >= 0.1 && k <= 100)) runtime_fail("lodscale takes 0.1 to 100");
+            runtime_lod_scale_set(k);
+        } else if (!strncmp(line, "farscale ", 9)) {   /* "farscale <K>": render distance (camera far plane) x K, as the effects page */
+            extern void runtime_far_scale_set(double k);
+            char *end; double k = strtod(line + 9, &end); if (end == line + 9 || !(k >= 0.001 && k <= 100)) runtime_fail("farscale takes 0.001 to 100");
+            runtime_far_scale_set(k);
         } else if (!strncmp(line, "frmwatch ", 9) || !strncmp(line, "frmwatchx ", 10)) {   /* "frmwatch[x] <seconds> [hex offset]": who reads a time value */
             extern void runtime_diag_frm_watch(double secs, unsigned off, int in_x);
             int in_x = line[8] == 'x'; double secs; unsigned off = 0x10;

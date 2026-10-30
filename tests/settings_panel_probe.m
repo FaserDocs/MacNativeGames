@@ -27,6 +27,20 @@ void dm_gfx_ssao_start(int pct) { fakeSsaoStart = pct; }
 int dm_gfx_ssao_locked(void) { return 0; }
 int dm_gfx_ssao_live(void) { return fakeSsaoLive; }
 void dm_gfx_ssao_set(int pct) { if (fakeSsaoLive) fakeSsaoSet = pct; }
+/* gfx/nvn/totk_fx.h's effect switches (two of them here; 1.4.3 only); the two distances are game_patches_v143.c's own (the fixture). */
+#ifdef TOTK_GAME_V143
+#define TOTK_V143 1
+#else
+#define TOTK_V143 0
+#endif
+static const char *const fakeFxIds[2] = {"ao", "bloom"}, *const fakeFxNames[2][2] = {{"环境光遮蔽", "Ambient occlusion"}, {"泛光", "Bloom"}};
+static int fakeFxOn[2] = {1, 1};
+int dm_gfx_fx_count(void) { return 2; }
+const char *dm_gfx_fx_id(int i) { return fakeFxIds[i]; }
+const char *dm_gfx_fx_name(int i, int english) { return fakeFxNames[i][english != 0]; }
+int dm_gfx_fx_available(int i) { (void)i; return 1; }
+int dm_gfx_fx_on(int i) { return fakeFxOn[i]; }
+void dm_gfx_fx_set(int i, int on) { fakeFxOn[i] = on != 0; }
 /* runtime/gamepad.m's controller type and mouse mode without GameController: a DualSense is connected. */
 static int fakePadType = GAMEPAD_TYPE_AUTO, fakePadDetected = GAMEPAD_TYPE_PLAYSTATION, fakeMouse;
 int runtime_gamepad_type_set(int type) { return fakePadType = type; }
@@ -265,7 +279,8 @@ int main(int argc, const char **argv) { @autoreleasepool {
     runtime_input_key_synthetic(18, 1); runtime_input_key_synthetic(18, 1); tick(); runtime_input_key_synthetic(18, 0); tick();
     assert(settingsOpen && fakeSettingsCapture && settingsPanel && !settingsPanel.hidden && settingsPanel.superview == window.contentView);
     assert(NSContainsRect(window.contentView.bounds, settingsPanel.frame));
-    assert(settingsPanel.allRows.count == 15);
+    assert(settingsPanel.allRows.count == 18 + TOTK_V143);   /* 15, then the effects page: two distances and two effect switches
+                                                                  (1.4.3), or three greyed rows */
 
     /* FPS graph: a switch (here off at start; frontend.m turns it on when nothing is saved), kept in fps-graph.txt
        that both games share (user 2026-10-29). */
@@ -380,6 +395,19 @@ int main(int argc, const char **argv) { @autoreleasepool {
     press(18); fakeSsaoLive = 1; press(18); assert(settingsOpen && menu(@"Stronger ambient occlusion").enabled);
 #else
     shows(@"Stronger ambient occlusion", @"Not in this version"); assert(!menu(@"Stronger ambient occlusion").enabled);
+#endif
+    /* The effects page (2026-10-30): the two distances (1.4.3 only) and a switch per effect, each in force and saved at once. */
+#ifdef TOTK_GAME_V143
+    shows(@"Model detail distance (LOD)", @"1x (as the game has it)"); shows(@"Render distance", @"100% (as the game has it)");
+    pick(@"Model detail distance (LOD)", @"4×"); assert(runtime_lod_scale() == 4 && !strcmp(savedName, "graphics-lod.txt") && !strcmp(savedWord, "400"));
+    pick(@"Render distance", @"25%"); assert(runtime_far_scale() == 0.25 && !strcmp(savedName, "graphics-far.txt") && !strcmp(savedWord, "25"));
+    pick(@"Model detail distance (LOD)", @"1x (as the game has it)"); pick(@"Render distance", @"100% (as the game has it)"); assert(runtime_lod_scale() == 1 && runtime_far_scale() == 1);
+    assert(switched(@"Bloom")); flip(@"Bloom", NO); assert(!fakeFxOn[1] && !strcmp(savedName, "graphics-effects.txt") && !strcmp(savedWord, "bloom"));
+    flip(@"Ambient occlusion", NO); assert(!strcmp(savedWord, "ao bloom"));
+    flip(@"Bloom", YES); flip(@"Ambient occlusion", YES); assert(fakeFxOn[0] && fakeFxOn[1] && !strcmp(savedWord, "none"));
+#else
+    shows(@"Render distance", @"Not in this version"); assert(!menu(@"Render distance").enabled);
+    shows(@"Effect switches", @"Not in this version");
 #endif
     assert(!switched(@"Mouse")); flip(@"Mouse", YES); assert(fakeMouse && switched(@"Mouse")); flip(@"Mouse", NO); assert(!fakeMouse);
 

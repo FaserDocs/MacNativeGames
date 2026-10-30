@@ -39,7 +39,8 @@ static int ssao_param(int i) {   // the environment value goes in only while the
                  int was = -1; if (!atomic_compare_exchange_strong(&g_ssao_v[i], &was, v)) v = was; }
     return v;
 }
-static void ssao_values(float p[4]) { p[0] = ssao_param(0) / 100.0f; p[1] = ssao_param(1) / 100.0f; p[2] = (float)ssao_param(2); p[3] = 0.0f; }
+static _Atomic int g_ssao_off;   // the effect switch (totk_fx.h): w = 1, no ambient occlusion at all (TOTK)
+static void ssao_values(float p[4]) { p[0] = ssao_param(0) / 100.0f; p[1] = ssao_param(1) / 100.0f; p[2] = (float)ssao_param(2); p[3] = atomic_load(&g_ssao_off) ? 1.0f : 0.0f; }
 #define SSAO_MARK "// totk-ssao\n"   // first line of a patched source and of every variant made from it (variant_library)
 
 /* TOTK_SSAO: the patched shaders (weak: a library the prediction cache drops goes away). Own lock: g_shcache is the submit
@@ -82,6 +83,8 @@ static int ssao_flag(const char *name, int v) {
 void dm_gfx_ssao_start(int pct) { atomic_store(&g_ssao_saved, pct > 0 ? pct : 0); }
 int dm_gfx_ssao_locked(void) { return getenv("TOTK_SSAO") || getenv("TOTK_SSAO_STRENGTH") || getenv("TOTK_SSAO_RADIUS"); }
 int dm_gfx_ssao_live(void) { return ssao_on(); }
+/* The effect switch (totk_fx.h, TOTK): 1 turns the AO off in every patched shader at once, 0 back to the level above. */
+static void ssao_set_off(int off) { atomic_store(&g_ssao_off, off != 0); if (ssao_on()) ssao_write_all(); }
 void dm_gfx_ssao_set(int pct) {
     if (!ssao_on()) return;
     ssao_flag("ssao_strength_pct", pct); ssao_flag("ssao_radius_pct", pct);
@@ -99,7 +102,8 @@ static const char k_ssao_helper_totk[] =
     "// per tap clamp((n.v - 0.03) / (v.v + 1e-4)), occlusion = clamp(sum * 2/N) with N = 8 (the stock \"* 0.25\"), AO = 1 - occlusion.\n"
     "// p = this shader's own c1[48]: x strength (multiplier on the occlusion term, <= 0 -> 1, at most 8), y radius scale\n"
     "// (<= 0 -> 1, else 0.25 .. 4),\n"
-    "// z extra +/- tap pairs on the perpendicular axis (0..8, rounded), w reserved. p == 0 returns the stock value untouched.\n"
+    "// z extra +/- tap pairs on the perpendicular axis (0..8, rounded), w 1 = no AO (the effect switch). p == 0 returns the\n"
+    "// stock value untouched.\n"
     "static inline float totk_ssao_tap(float2 uv, float2 dir, float d, float2 fr, float3 pc, float3 nrm,\n"
     "                                  float zs, float zb, texture2d<float> tex, sampler smp)\n"
     "{\n"
@@ -118,6 +122,8 @@ static const char k_ssao_helper_totk[] =
     "                                 float3 nrm, float zs, float zb, constant float4* c1, texture2d<float> tex, sampler smp)\n"
     "{\n"
     "    p = select(p, float4(0.0), isnan(p));                 // a NaN parameter counts as 0\n"
+    "    if (p.w > 0.5)\n"
+    "        return 1.0;                                        // the effect switch: nothing occluded\n"
     "    if (all(p == float4(0.0)))\n"
     "        return stock_ao;                                   // all zero: the stock value, bit for bit\n"
     "    const float s = p.x > 0.0 ? min(p.x, 8.0) : 1.0;\n"

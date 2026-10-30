@@ -42,6 +42,15 @@
                                                              switches first, TOTK_RUMBLE_GAIN the strength (the row greyed
                                                              out); a device the run started without comes at the next
                                                              launch (its title says so)
+   Effects (Tears of the Kingdom 1.4.3; user 2026-10-30, after UltraCam's render distance and shader switches)
+     model detail distance 1x / 2x / 4x / 10x               runtime_lod_scale_set (game_patches_v143.c): the level of
+                                                             detail a model gets at a distance is the one it had at
+                                                             1/K of it; graphics-lod.txt (x100); TOTK_LOD_SCALE first
+     render distance      100% / 50% / 25% / 10%             runtime_far_scale_set: the camera's far plane (the game's
+                                                             25000 already spans the map, so only less is offered);
+                                                             graphics-far.txt (percent); TOTK_FAR_SCALE first
+     one switch per effect                                   dm_gfx_fx_set (gfx/nvn/totk_fx.h): its passes left out while
+                                                             off; graphics-effects.txt lists the ones that are off
    Key bindings: one row per game action with two keyboard and mouse inputs (keyboard_map.h, runtime_keymap_set: in force
    at once, saved in keyboard.txt) and the controller buttons that drive it (controller_map.h, runtime_controller_map_set:
    controls.txt). Click a box, then press a key or a mouse button (key 1 cancels; Command keys stay the system's) or, in
@@ -67,6 +76,12 @@
 void dm_gfx_set_flag(const char *name, int value);
 void dm_gfx_ssao_start(int pct); int dm_gfx_ssao_locked(void); int dm_gfx_ssao_live(void); void dm_gfx_ssao_set(int pct);   /* totk_ssao.h */
 void nvn_fps_lock_set(int fps);   /* gfx/nvn/hle_nvn.c: the shared totk_fps_limits choices */
+#ifdef TOTK_GAME_V143   /* the effects page: its shader keys and patch sites are 1.4.3's */
+int dm_gfx_fx_count(void); const char *dm_gfx_fx_id(int i); const char *dm_gfx_fx_name(int i, int english);   /* totk_fx.h */
+int dm_gfx_fx_available(int i); int dm_gfx_fx_on(int i); void dm_gfx_fx_set(int i, int on);
+double runtime_lod_scale(void); void runtime_lod_scale_set(double k); int runtime_lod_scale_locked(void);   /* game_patches_v143.c */
+double runtime_far_scale(void); void runtime_far_scale_set(double k); int runtime_far_scale_locked(void);
+#endif
 int nvn_fps_lock(void);
 
 /* Picking a resolution sizes the window to it at once (user 2026-10-25): 720p 1280x720, 1080p 1920x1080, MetalFX 2560x1440, native its own size (2K), 2K + MetalFX and native 4K 3840x2160, in the window's points as the first window (frontend.m runtime_front_run), the picture's shape kept
@@ -125,6 +140,26 @@ static void settings_ssao_restore(void) {
  settingsSsao=(int)pct;dm_gfx_ssao_start(settingsSsao);
 #endif
 }
+/* The effects page: graphics-effects.txt holds the ids of the effects that are off, one word each ("none" when all are
+   on); graphics-lod.txt the model detail distance x100, graphics-far.txt the render distance in percent. */
+#ifdef TOTK_GAME_V143
+static void settings_effects_save(void) {
+ char line[512]="";size_t n=0;
+ for(int i=0;i<dm_gfx_fx_count();i++)if(!dm_gfx_fx_on(i))n+=(size_t)snprintf(line+n,sizeof line-n,"%s%s",n?" ":"",dm_gfx_fx_id(i));
+ runtime_setting_save("graphics-effects.txt",n?line:"none","effects");
+}
+static void settings_effects_restore(void) {
+ char line[512];
+ if(runtime_setting_word("graphics-effects.txt",line,sizeof line))
+  for(char *w=strtok(line," \t\r\n");w;w=strtok(NULL," \t\r\n"))
+   for(int i=0;i<dm_gfx_fx_count();i++)if(!strcmp(w,dm_gfx_fx_id(i)))dm_gfx_fx_set(i,0);
+ int v;
+ if(!runtime_lod_scale_locked()&&settings_read_int("graphics-lod.txt",&v)&&v>=100&&v<=1000)runtime_lod_scale_set(v/100.0);
+ if(!runtime_far_scale_locked()&&settings_read_int("graphics-far.txt",&v)&&v>=10&&v<=100)runtime_far_scale_set(v/100.0);
+}
+#else
+static void settings_effects_restore(void) {}
+#endif
 static void settings_restore_begin(void) {
  int v;char word[32];
  if(settings_read_int("graphics-overlay.txt",&v)&&v<=HUD_MODE_MINIMAL)fps_overlay_set_hud_mode(v);
@@ -136,6 +171,7 @@ static void settings_restore_begin(void) {
  }
  if(!getenv("TOTK_TAA")&&settings_read_int("graphics-taa.txt",&v)&&(v==0||v==1))taa_set(v);
  settings_ssao_restore();
+ settings_effects_restore();
  const char *output=getenv("TOTK_OUTPUT_RES");
  if((!output||!*output||!strcmp(output,"auto"))&&!getenv("TOTK_MFX_OUTPUT")&&!getenv("TOTK_MFX_UPSCALE")&&
     settings_read_int("graphics-output.txt",&v)&&v<=OUTPUT_MODE_NATIVE_4K)settingsPendingOutput=v;
@@ -168,7 +204,7 @@ static void settings_restore_start(void) {
  [NSRunLoop.mainRunLoop addTimer:settingsRestoreTimer forMode:NSRunLoopCommonModes];
 }
 
-enum { SETTINGS_PAGE_DISPLAY, SETTINGS_PAGE_INPUT, SETTINGS_PAGE_BINDINGS, SETTINGS_PAGES };
+enum { SETTINGS_PAGE_DISPLAY, SETTINGS_PAGE_INPUT, SETTINGS_PAGE_EFFECTS, SETTINGS_PAGE_BINDINGS, SETTINGS_PAGES };
 static void settings_refresh_all(void);
 static void settings_rebuild(void);
 static void settings_pointer_used(void);
@@ -180,7 +216,7 @@ static void settings_pointer_used(void);
 @property(copy) void (^set)(int value);
 @property(copy) NSString *(^firstTitle)(void);   /* a first choice whose text changes (auto: the controller it sees) */
 @property int sliderMin, sliderMax;              /* a slider when sliderMax > sliderMin */
-@property NSInteger page;                        /* SETTINGS_PAGE_DISPLAY or SETTINGS_PAGE_INPUT */
+@property NSInteger page;                        /* SETTINGS_PAGE_DISPLAY, _INPUT or _EFFECTS */
 @property(strong) NSControl *control;
 @property(strong) NSTextField *valueLabel;       /* a slider's value */
 -(BOOL)slider;
@@ -280,6 +316,39 @@ static TOTKSettingRow *settings_ssao_row(void) {
   if(v)settings_save_int("ssao.txt",v,"ambient occlusion");else runtime_setting_save("ssao.txt","off","ambient occlusion");});
 #endif
 }
+/* The effects page: the two distances (1.4.3), then a switch per effect (a greyed "not in this version" when the game's
+   shaders are not the ones the switches know). */
+#ifdef TOTK_GAME_V143
+static TOTKSettingRow *settings_distance_row(int lod) {
+ NSString *t=lod?settings_text("模型细节距离（LOD）","Model detail distance (LOD)"):settings_text("渲染距离","Render distance");
+ int now=(int)lround((lod?runtime_lod_scale():runtime_far_scale())*100);
+ NSString *(^text)(int)=^NSString *(int v){
+  if(v==100)return lod?settings_text("1×（游戏原样）","1x (as the game has it)"):settings_text("100%（游戏原样）","100% (as the game has it)");
+  return lod?[NSString stringWithFormat:@"%g×",v/100.0]:[NSString stringWithFormat:@"%d%%",v];};
+ if(lod?runtime_lod_scale_locked():runtime_far_scale_locked())return settings_fixed(t,text(now));
+ NSMutableArray<NSNumber *> *values=[(lod?@[@100,@200,@400,@1000]:@[@100,@50,@25,@10]) mutableCopy];
+ if(![values containsObject:@(now)])[values addObject:@(now)];
+ NSMutableArray<NSString *> *choices=[NSMutableArray array];for(NSNumber *v in values)[choices addObject:text(v.intValue)];
+ return settings_row(t,choices,values,^int{return (int)lround((lod?runtime_lod_scale():runtime_far_scale())*100);},^(int v){
+  if(lod){runtime_lod_scale_set(v/100.0);settings_save_int("graphics-lod.txt",v,"model detail distance");}
+  else{runtime_far_scale_set(v/100.0);settings_save_int("graphics-far.txt",v,"render distance");}});
+}
+static NSArray<TOTKSettingRow *> *settings_effect_rows(void) {
+ NSMutableArray<TOTKSettingRow *> *rows=[NSMutableArray arrayWithObjects:settings_distance_row(1),settings_distance_row(0),nil];
+ for(int i=0;i<dm_gfx_fx_count();i++){
+  NSString *t=@(TOTK_UI(dm_gfx_fx_name(i,0),dm_gfx_fx_name(i,1)));
+  if(!dm_gfx_fx_available(i)){[rows addObject:settings_fixed(t,settings_text("这个版本没有","Not in this version"))];continue;}
+  [rows addObject:settings_row(t,nil,nil,^int{return dm_gfx_fx_on(i);},^(int v){dm_gfx_fx_set(i,v);settings_effects_save();})];
+ }
+ return rows;
+}
+#else
+static NSArray<TOTKSettingRow *> *settings_effect_rows(void) {   /* other versions: the page says so */
+ NSString *none=settings_text("这个版本没有","Not in this version");
+ return @[settings_fixed(settings_text("模型细节距离（LOD）","Model detail distance (LOD)"),none),settings_fixed(settings_text("渲染距离","Render distance"),none),
+          settings_fixed(settings_text("效果开关","Effect switches"),none)];
+}
+#endif
 static NSArray<TOTKSettingRow *> *settings_rows(void) {
  NSMutableArray<TOTKSettingRow *> *rows=[NSMutableArray array];
  /* Display */
@@ -348,7 +417,10 @@ static NSArray<TOTKSettingRow *> *settings_rows(void) {
  [rows addObject:settings_feedback_row(0)];
  [rows addObject:settings_gain_row()];
  [rows addObject:settings_feedback_row(1)];
- for(NSUInteger i=0;i<rows.count;i++)rows[i].page=i<display?SETTINGS_PAGE_DISPLAY:SETTINGS_PAGE_INPUT;
+ NSUInteger input=rows.count;
+ /* Effects */
+ [rows addObjectsFromArray:settings_effect_rows()];
+ for(NSUInteger i=0;i<rows.count;i++)rows[i].page=i<display?SETTINGS_PAGE_DISPLAY:i<input?SETTINGS_PAGE_INPUT:SETTINGS_PAGE_EFFECTS;
  return rows;
 }
 
@@ -522,10 +594,10 @@ enum { SETTINGS_W = 600, SETTINGS_ROW_H = 34, SETTINGS_GAP = 6, SETTINGS_TOP = 9
        SETTINGS_CELL_W = 118, SETTINGS_CELL_GAP = 6, SETTINGS_BIND_ROW_H = 28, SETTINGS_SECTION_H = 24 };
 -(instancetype)init{
  NSArray<TOTKSettingRow *> *rows=settings_rows();
- NSUInteger perPage[2]={0,0};for(TOTKSettingRow *r in rows)perPage[r.page]++;
+ NSUInteger perPage[SETTINGS_PAGE_BINDINGS]={0};for(TOTKSettingRow *r in rows)perPage[r.page]++;
  /* The rows close up (down to 24 pt, 2 pt apart: a 26 pt menu then meets the next one's edge) when the panel would not fit the window (21:9 or 32:9 on a laptop
     screen), so its title, close button, tabs and first rows stay in view. */
- CGFloat n=MAX(perPage[0],perPage[1]),rowH=SETTINGS_ROW_H,gap=SETTINGS_GAP,room=window?window.contentView.bounds.size.height-8:CGFLOAT_MAX;
+ CGFloat n=MAX(MAX(perPage[0],perPage[1]),perPage[2]),rowH=SETTINGS_ROW_H,gap=SETTINGS_GAP,room=window?window.contentView.bounds.size.height-8:CGFLOAT_MAX;
  if(n&&SETTINGS_TOP+n*(rowH+gap)-gap+SETTINGS_BOTTOM>room){gap=2;rowH=fmax(24,floor((room-SETTINGS_TOP-SETTINGS_BOTTOM+gap)/n-gap));}
  /* The key bindings drawings need a wider, taller panel (PR #1210); it is made at that size while they are shown. */
  BOOL drawings=settings_drawings_for(g_settings_page);
@@ -541,11 +613,11 @@ enum { SETTINGS_W = 600, SETTINGS_ROW_H = 34, SETTINGS_GAP = 6, SETTINGS_TOP = 9
  title.textColor=NSColor.whiteColor;title.frame=NSMakeRect(18,h-38,300,24);[self addSubview:title];
  NSButton *close=[NSButton buttonWithTitle:@"✕" target:self action:@selector(close:)];close.bordered=NO;close.refusesFirstResponder=YES;
  close.font=[NSFont systemFontOfSize:15 weight:NSFontWeightBold];close.contentTintColor=NSColor.whiteColor;close.frame=NSMakeRect(W-40,h-40,28,28);[self addSubview:close];
- NSSegmentedControl *tabs=[NSSegmentedControl segmentedControlWithLabels:@[settings_text("画面","Display"),settings_text("输入","Input"),settings_text("按键设置","Key bindings")]
+ NSSegmentedControl *tabs=[NSSegmentedControl segmentedControlWithLabels:@[settings_text("画面","Display"),settings_text("输入","Input"),settings_text("画面效果","Effects"),settings_text("按键设置","Key bindings")]
   trackingMode:NSSegmentSwitchTrackingSelectOne target:self action:@selector(tabChanged:)];
  tabs.segmentDistribution=NSSegmentDistributionFillEqually;tabs.refusesFirstResponder=YES;tabs.frame=NSMakeRect(14,h-80,W-28,26);[self addSubview:tabs];self.tabs=tabs;
  NSMutableArray<NSView *> *pages=[NSMutableArray array];
- for(NSInteger p=0;p<2;p++){
+ for(NSInteger p=0;p<SETTINGS_PAGE_BINDINGS;p++){
   NSView *page=[[NSView alloc] initWithFrame:NSMakeRect(0,SETTINGS_BOTTOM,W,body)];NSUInteger k=0;
   for(TOTKSettingRow *r in rows){
    if(r.page!=p)continue;

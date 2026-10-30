@@ -2635,7 +2635,7 @@ static void driver_cache_check_set(int v);
 static int ssao_flag(const char *name, int v);   // TOTK_SSAO (totk_ssao.h): "flag ssao_strength_pct | ssao_radius_pct | ssao_pairs"
 // One shader class can be hidden for geometry fault isolation without restarting.
 // Diagnostic only: measurements with this enabled are never valid performance results.
-static _Atomic uint64_t g_diag_skip_fs;
+static _Atomic uint64_t g_diag_skip_fs, g_diag_skip_cs;
 static _Atomic uint64_t g_diag_texpng_fs, g_diag_geometry_fs;
 static int diag_shader_prefix_matches(const char *key, uint64_t value) {
     char prefix[17]; snprintf(prefix, sizeof prefix, "%016llx", (unsigned long long)value);
@@ -2699,6 +2699,17 @@ void dm_gfx_set_flag(const char *name, int v) {
         if (strlen(p) != 16 || strspn(p, "0123456789abcdefABCDEF") != 16) { MLOG("[flag] skipfs needs exactly 16 hex digits"); return; }
         atomic_store(&g_diag_skip_fs, v ? strtoull(p, NULL, 16) : 0);
         MLOG("[flag] diagnostic skipfs %.16s = %d (incomplete geometry; invalid FPS)", p, v != 0); return;
+    }
+    if (!strncmp(name, "fx_", 3)) {   // "flag fx_<id> <0|1>": an effect switch (totk_fx.h), 0 = off
+        extern int dm_gfx_fx_count(void); extern const char *dm_gfx_fx_id(int i); extern void dm_gfx_fx_set(int i, int on);
+        for (int i = 0; i < dm_gfx_fx_count(); i++) if (!strcmp(name + 3, dm_gfx_fx_id(i))) { dm_gfx_fx_set(i, v != 0); return; }
+        MLOG("[flag] no effect %s", name + 3); return;
+    }
+    if (!strncmp(name, "skipcs_", 7)) {   // the same for the dispatches of a compute shader
+        const char *p = name + 7;
+        if (strlen(p) != 16 || strspn(p, "0123456789abcdefABCDEF") != 16) { MLOG("[flag] skipcs needs exactly 16 hex digits"); return; }
+        atomic_store(&g_diag_skip_cs, v ? strtoull(p, NULL, 16) : 0);
+        MLOG("[flag] diagnostic skipcs %.16s = %d (the picture is wrong; invalid FPS)", p, v != 0); return;
     }
     if (!strncmp(name, "texpngfs_", 9) || !strncmp(name, "geodumpfs_", 10)) {
         int geometry = !strncmp(name, "geodumpfs_", 10);
@@ -5242,7 +5253,7 @@ static void shmap_load(void) {
     id peer[4]; NSString *key[4]; id<MTLFunction> fn[4]; int mode[4]; unsigned next;
 } @end
 @implementation NvFunctionCache @end
-@interface NvShader : NSObject { @public id<MTLFunction> fn; nvn_refl rf; id<MTLArgumentEncoder> ae; NSUInteger arg_len; int stage, range_ro, writes_depth, lay_ok; uint8_t drv_scanned[3];   /* drv_scanned (TOTK): driver segment c0 / c2 reads found by drv_scan in the MSL but missing from the reflection json */ /* lay_ok (TOTK): vertex MSL can write the layer (1) or not (-1), 0 = not checked yet; writes_depth (TOTK): the fragment function has a [[depth(...)]] output, so its pipeline needs a depth attachment */ const char *builtin; uint64_t logged; char key[80]; id<MTLBuffer> c1buf; uint64_t c1_gpu; size_t c1off; int ssao_slot;   /* ssao_slot: TOTK_SSAO parameter float4 in c1 (0 = not patched; totk_ssao.h) */
+@interface NvShader : NSObject { @public id<MTLFunction> fn; nvn_refl rf; id<MTLArgumentEncoder> ae; NSUInteger arg_len; int stage, range_ro, writes_depth, lay_ok; uint8_t drv_scanned[3];   /* drv_scanned (TOTK): driver segment c0 / c2 reads found by drv_scan in the MSL but missing from the reflection json */ /* lay_ok (TOTK): vertex MSL can write the layer (1) or not (-1), 0 = not checked yet; writes_depth (TOTK): the fragment function has a [[depth(...)]] output, so its pipeline needs a depth attachment */ const char *builtin; uint64_t logged; char key[80]; id<MTLBuffer> c1buf; uint64_t c1_gpu; size_t c1off; int ssao_slot, fx;   /* ssao_slot: TOTK_SSAO parameter float4 in c1 (0 = not patched; totk_ssao.h); fx: the effect switch it belongs to (totk_fx.h) */
     uint16_t texture_slots[NVN_REFL_MAXB]; uint8_t texture_count, texture_plan_ready;
     uint8_t guard_idx[NVN_REFL_MAXB], guard_count, guard_plan_ready;   // TOTK: the bindings upd_guard_stage looks at (storage / typed buffers), from the reflection once
     // 上次编好的参数缓冲
@@ -5575,6 +5586,7 @@ static int shader_device_libs(void) {
 #endif
 }
 #include "totk_ssao.h"   // TOTK_SSAO=1 (Mac only, off by default): a tunable ambient occlusion
+#include "totk_fx.h"     // the settings panel's effect switches
 /* iOS (and the Mac's pipeline-archive mode): the variant compiled for the device while packaging (2026-10-29;
    ios/tools/device_pipelines.py --variants, from the sources the Mac recorded making the device's pipelines), in the seed as
    variant-<SHA-256 of the source>.metallib: loaded instead of compiled (45-225 ms each on an iPhone 14), and the pipeline
@@ -12593,6 +12605,7 @@ static void draw_inner(const p_draw *dw, const p_draw_idx *di) {
     { uint64_t skip = atomic_load(&g_diag_skip_fs);
       if (skip && pr->sh[1] && !g_defer_replaying) { char prefix[17]; snprintf(prefix, sizeof prefix, "%016llx", (unsigned long long)skip);
           if (!strncmp(pr->sh[1]->key, prefix, 16)) return; }
+      if (!g_defer_replaying && fx_drop(pr->sh[1], 1)) return;   // an effect switched off (totk_fx.h)
       static char sk[16][20]; static int nsk = -1;
       if (nsk < 0) { nsk = 0; for (const char *q = getenv("DM_NVN_SKIP_FS"); q && *q && nsk < 16; q = strchr(q, ',') ? strchr(q, ',') + 1 : q + strlen(q)) { size_t n = strcspn(q, ","); if (n > 16) n = 16; memcpy(sk[nsk], q, n); sk[nsk++][n] = 0; }
                      if (nsk) MLOG("DM_NVN_SKIP_FS：丢弃 %d 个片元着色器的绘制（诊断，画面不对）", nsk); }
@@ -12797,7 +12810,7 @@ frz_plain:;
     if (ux != 1) { vx = ax + (vx - ax) * kx; vw *= kx; }
     if (uy != 1) { vy = cy + (vy - cy) / uy; vh /= uy; }
     if ((atomic_load(&g_uw_log) > 0 && uw_on_canvas()) || atomic_load(&g_draw_log) > 0)
-        MLOG("[uw] F%llu pass %llu ui %d squeeze %.3f/%.3f vs %.8s fs %.8s count %u inst %d vp %s%g,%g,%g,%g sc %s%d,%d,%d,%d blend %#x tex %ux%u fmt %#x ser %llu bl %u,%u,%u/%u,%u,%u cm %#x prim %d",
+        MLOG("[uw] F%llu pass %llu ui %d squeeze %.3f/%.3f vs %.16s fs %.16s count %u inst %d vp %s%g,%g,%g,%g sc %s%d,%d,%d,%d blend %#x tex %ux%u fmt %#x ser %llu bl %u,%u,%u/%u,%u,%u cm %#x prim %d",
              (unsigned long long)atomic_load(&g_cur_frame), g_stat_pass, g_uw_ui, ux, uy, pr && pr->sh[0] ? pr->sh[0]->key : "-", pr && pr->sh[1] ? pr->sh[1]->key : "-",
              dw ? dw->count : di ? di->count : 0, dw ? dw->instances : di ? di->instances : 0, S.has_vp ? "" : "none ", S.has_vp ? S.vp[0][0] : 0, S.has_vp ? S.vp[0][1] : 0, S.has_vp ? S.vp[0][2] : 0, S.has_vp ? S.vp[0][3] : 0,
              R.has_sc ? "" : "none ", R.sc.x, R.sc.y, R.sc.w, R.sc.h, S.color.blend_en, (unsigned)tw, (unsigned)th,
@@ -13179,6 +13192,9 @@ static void dispatch(const p_dispatch *dp) {
     if (cpr->missing) { static uint64_t n; if (!n++) MLOG("[shader-miss] 计算着色器还没翻译：跳过这个派发（以后同类不再提示）"); return; }
     NvShader *cs = cpr->sh[5];
     if (!cs) { RED_ONCE(28, "派发的程序没有计算着色器（或未映射）"); return; }
+    { uint64_t skip = atomic_load(&g_diag_skip_cs);   // diagnostic "flag skipcs_<key> 1"
+      if (skip && !g_defer_replaying) { char prefix[17]; snprintf(prefix, sizeof prefix, "%016llx", (unsigned long long)skip); if (!strncmp(cs->key, prefix, 16)) return; }
+      if (!g_defer_replaying && fx_drop(cs, 5)) return; }   // an effect switched off (totk_fx.h)
     const void *k = (__bridge const void *)cs;
     id<MTLComputePipelineState> ps = hm_get_id(&g_cps, &k);
     if (!ps) {
@@ -13228,7 +13244,7 @@ static void dispatch(const p_dispatch *dp) {
     else { if (g_blit) { enc_b_end(g_blit); g_blit = nil; } ce = pg_compute(); }
     enc_c_pso(ce, ps);
     if (!pre) encode_args(ce, cs, 5, 0);
-    if (atomic_load(&g_draw_log) > 0) MLOG("[uw] F%llu pass %llu dispatch cs %.8s grid %dx%dx%d", (unsigned long long)atomic_load(&g_cur_frame), g_stat_pass, cs->key, dp->x, dp->y, dp->z);
+    if (atomic_load(&g_draw_log) > 0) MLOG("[uw] F%llu pass %llu dispatch cs %.16s grid %dx%dx%d", (unsigned long long)atomic_load(&g_cur_frame), g_stat_pass, cs->key, dp->x, dp->y, dp->z);
     enc_c_dispatch(ce, MTLSizeMake(dp->x, dp->y, dp->z), MTLSizeMake(tg[0], tg[1], tg[2]));
     if (!reuse) enc_c_end(ce);
     bright_lut(cs);   // 3D 画面加亮：游戏算完调色表之后重写 | 3D picture brightening: rewrite after the game finishes computing the color lookup table

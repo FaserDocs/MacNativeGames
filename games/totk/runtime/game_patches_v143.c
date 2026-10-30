@@ -324,6 +324,107 @@ static void patch_bench_cam(Module *m){
             (unsigned long long)stub);
 #endif
 }
+/* Model LOD distance (Mac, the settings panel's effects page or TOTK_LOD_SCALE=<K>, 2026-10-30). The renderer picks a model's level of detail
+   from the view-space depth z of its bounding sphere (negative in front; the caller stores it at the entry's +0x10 next to
+   the projected radius): v = z + bias, the first level while v >= renderer+0xc50, beyond that one level per 1/k of depth
+   (bias and k from the model's LOD table). main+0x1ee8424 is that function; callers that see its vtable slot inline it,
+   so the sum appears at 12 sites. Each `fadd v, z, bias` branches to a stub computing z * c + bias, c = 1/K read from the
+   data page at every call, so the level at depth d is the one the game picks at d / K (K = 1: the same bits as fadd).
+   "lodscale <K>" changes K live. The community "LOD Improvement" pchtxt patches only the function, which the inlined
+   copies never call. Always installed on the Mac: at K = 1 the level is the game's own, bit for bit. */
+#define LOD_DATA_SLOT 0x180u
+#if !TARGET_OS_IPHONE
+static _Atomic uint32_t *lod_factor;
+static double lod_k=1,far_k=1;   /* the factors asked for (the settings panel may ask before the patches are installed) */
+static void factor_store(_Atomic uint32_t *slot,double k){float f=(float)k;uint32_t bits;memcpy(&bits,&f,4);atomic_store(slot,bits);}
+static double env_factor(const char *name,double lo){
+    const char *e=getenv(name);if(!e||!*e)return 0;
+    double k=strtod(e,NULL);if(!(k>=lo&&k<=100)){fprintf(stderr,"[totk] %s takes %g to 100\n",name,lo);runtime_fail("factor out of range");}
+    return k;
+}
+#endif
+static void patch_lod_distance(Module *m){
+#if TARGET_OS_IPHONE
+    (void)m;
+#else
+    double k=env_factor("TOTK_LOD_SCALE",0.1);if(k)lod_k=k;else k=lod_k;
+    static const uint64_t sites[]={0x7ad1c,0x7c00c,0x7c4b0,0x7d4a8,0x80f30,0x1ee8474,
+                                   0x2870578,0x287200c,0x2872a30,0x2874924,0x2874cfc,0x287f53c};
+    enum{N=sizeof sites/sizeof *sites,W=5};
+    uint64_t data=(m->file_size+0x3fff)&~0x3fffULL,stub=((m->file_size+15)&~15ULL)+128;   /* after the benchmark camera */
+    if(stub+N*W*4>data||data+LOD_DATA_SLOT+4>m->size)runtime_fail("1.4.3 LOD distance layout");
+    for(unsigned i=0;i<N*W*4;i++)if(m->base[stub+i])runtime_fail("1.4.3 LOD distance padding not empty");
+    for(unsigned i=0;i<N;i++){
+        uint32_t add,next;memcpy(&add,m->base+sites[i],4);memcpy(&next,m->base+sites[i]+4,4);
+        if((add&0xffe0fc00)!=0x1e202800||(next&0xfffffc00)!=0xbd4c5000)runtime_fail("1.4.3 LOD distance: the LOD code does not match");
+        unsigned d=add&31,n=(add>>5)&31,s=(add>>16)&31;   /* fadd sd, sn (depth), ss (bias) */
+        uint64_t at=stub+i*W*4,lit=data+LOD_DATA_SLOT-(at+4);
+        uint32_t words[W]={
+            0xfc1f0fff,                                   /* str d31, [sp, #-16]! */
+            0x1c000000|(((uint32_t)(lit>>2)&0x7ffff)<<5)|31,   /* ldr s31, <data page factor> */
+            0x1f000000|(31u<<16)|(s<<10)|(n<<5)|d,        /* fmadd sd, sn, s31, ss */
+            0xfc4107ff,                                   /* ldr d31, [sp], #16 */
+            branch(at+16,sites[i]+4)};
+        if(d==31||n==31||s==31||lit>=(1u<<20))runtime_fail("1.4.3 LOD distance stub");
+        memcpy(m->base+at,words,sizeof words);
+    }
+    lod_factor=(_Atomic uint32_t *)(void *)(m->base+data+LOD_DATA_SLOT);float c=(float)(1.0/k);factor_store(lod_factor,1.0/k);
+    for(unsigned i=0;i<N;i++){uint32_t j=branch(sites[i],stub+i*W*4);memcpy(m->base+sites[i],&j,4);}
+    fprintf(stderr,"[totk] 1.4.3 LOD distance x%g at %u sites (depth scaled by %g for the level choice), stub +%#llx\n",
+            k,(unsigned)N,c,(unsigned long long)stub);
+#endif
+}
+/* Render distance (Mac, the settings panel's effects page or TOTK_FAR_SCALE=<K>, 2026-10-30): the camera update copies the controller's near / far
+   (+0x134 / +0x138) and FOV (+0x13c) into the projection (+0x98 / +0x9c / +0xa0, sead's PerspectiveProjection order) at
+   main+0x628c20..0x628c44. The far load branches to a stub that keeps the game's value on the data page (+0x188, for
+   "farscale" to print) and multiplies it by the factor at +0x184. x8 is reloaded at 0x628c6c and s2 is caller-saved across
+   the sin / cos / tan calls that follow, so the stub may use both. The game's far is 25000 (measured 2026-10-30 in the
+   field and in Lookout Landing), more than the whole map: a larger factor shows nothing more, a smaller one cuts the
+   distance (fewer distant draws). Always installed on the Mac: at 1 the far plane is the game's own. */
+#define FAR_DATA_SLOT 0x184u
+#if !TARGET_OS_IPHONE
+static _Atomic uint32_t *far_factor;
+static const float *far_game;
+#endif
+static void patch_far_distance(Module *m){
+#if TARGET_OS_IPHONE
+    (void)m;
+#else
+    double k=env_factor("TOTK_FAR_SCALE",0.001);if(k)far_k=k;else k=far_k;
+    uint64_t data=(m->file_size+0x3fff)&~0x3fffULL,stub=((m->file_size+15)&~15ULL)+128+12*5*4;   /* after the LOD stubs */
+    if(stub+24>data||data+FAR_DATA_SLOT+8>m->size)runtime_fail("1.4.3 render distance layout");
+    for(unsigned i=0;i<24;i++)if(m->base[stub+i])runtime_fail("1.4.3 render distance padding not empty");
+    static const Patch guards[]={{0x628c30,0xbd413a60,0},{0x628c38,0xbd009e80,0},{0x628c6c,0x91051268,0}};
+    for(unsigned i=0;i<3;i++){uint32_t w;memcpy(&w,m->base+guards[i].off,4);if(w!=guards[i].original)runtime_fail("1.4.3 render distance: the camera code does not match");}
+    uint32_t words[6]={
+        0xbd413a60,                                              /* ldr s0, [x19, #0x138]: the game's far */
+        adrp(8,(uintptr_t)m->base+stub+4,(uintptr_t)m->base+data),
+        0xbd000100|(((FAR_DATA_SLOT+4)/4)<<10),                  /* str s0, [x8, #+0x188] */
+        0xbd400102|((FAR_DATA_SLOT/4)<<10),                      /* ldr s2, [x8, #+0x184] */
+        0x1e220800,                                              /* fmul s0, s0, s2 */
+        branch(stub+20,0x628c34)};
+    memcpy(m->base+stub,words,sizeof words);
+    far_factor=(_Atomic uint32_t *)(void *)(m->base+data+FAR_DATA_SLOT);far_game=(const float *)(const void *)(m->base+data+FAR_DATA_SLOT+4);
+    factor_store(far_factor,k);
+    uint32_t j=branch(0x628c30,stub);memcpy(m->base+0x628c30,&j,4);
+    fprintf(stderr,"[totk] 1.4.3 render distance x%g (camera far plane), stub +%#llx\n",k,(unsigned long long)stub);
+#endif
+}
+#if !TARGET_OS_IPHONE
+/* The settings panel and the input file's "farscale" / "lodscale": in force at once, or from the patch's installation. */
+void runtime_far_scale_set(double k){
+    far_k=k;if(far_factor)factor_store(far_factor,k);
+    fprintf(stderr,"[totk] farscale: render distance x%g (the game's far plane %.1f)\n",k,far_game?*(const volatile float *)far_game:0.0f);
+}
+void runtime_lod_scale_set(double k){
+    lod_k=k;if(lod_factor)factor_store(lod_factor,1.0/k);
+    fprintf(stderr,"[totk] lodscale: LOD distance x%g\n",k);
+}
+double runtime_far_scale(void){return far_k;}
+double runtime_lod_scale(void){return lod_k;}
+int runtime_far_scale_locked(void){const char *e=getenv("TOTK_FAR_SCALE");return e&&*e;}
+int runtime_lod_scale_locked(void){const char *e=getenv("TOTK_LOD_SCALE");return e&&*e;}
+#endif
 #if !TARGET_OS_IPHONE
 /* High-frame-rate diagnostics (Mac, TOTK_INPUT_FILE commands). Such bugs sit in game code that compares the game's time
    values with constants tuned for 30 Hz (#61: X+0x28 > 100 above). The time values: the FrameRateMgr singleton
@@ -405,6 +506,8 @@ void runtime_game_patches(Module *m) {
                      ((m->text_end + 15) & ~15ULL) + 320,   /* Vert+ stubs (2 x 304 bytes): after the bounce veneer at +256, before the rewriter's code at +1024 */
                      (m->file_size + 0x3fff) & ~0x3fffULL); }
     patch_bench_cam(m);
+    patch_lod_distance(m);
+    patch_far_distance(m);
     const char *enabled = getenv("TOTK_FPS60");
     if (enabled && !strcmp(enabled, "0")) {
         fprintf(stderr, "[totk] 1.4.3 shipping frame controller (TOTK_FPS60=0)\n");
