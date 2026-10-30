@@ -268,7 +268,7 @@ static void *input_file(void *arg) {
 #if defined(TOTK_GAME_V143) && !TARGET_OS_IPHONE   /* high-frame-rate diagnostics (game_patches_v143.c) */
         } else if (!strncmp(line, "lodscale ", 9)) {   /* "lodscale <K>": model detail distance x K (the settings panel's effects page, game_patches_v143.c) */
             extern void runtime_lod_scale_set(double k);
-            char *end; double k = strtod(line + 9, &end); if (end == line + 9 || !(k >= 0.1 && k <= 100)) runtime_fail("lodscale takes 0.1 to 100");
+            char *end; double k = strtod(line + 9, &end); if (end == line + 9 || !(k >= 0.1 && k <= 1e6)) runtime_fail("lodscale takes 0.1 to 1000000 (1000000: always the finest)");
             runtime_lod_scale_set(k);
         } else if (!strncmp(line, "farscale ", 9)) {   /* "farscale <K>": render distance (camera far plane) x K, as the effects page */
             extern void runtime_far_scale_set(double k);

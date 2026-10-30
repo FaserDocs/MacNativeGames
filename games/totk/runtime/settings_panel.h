@@ -19,15 +19,6 @@
                                                              the window takes that shape at once, its height kept
                                                              (runtime_front_resize_aspect; user 2026-10-25: no fitting the
                                                              window any more); TOTK_ASPECT's ratio is offered too
-     edge smoothing       switch                             taa_set (gfx/nvn/totk_taa.m)
-     anisotropic filtering off / 2x / 4x / 8x / 16x          dm_gfx_aniso_start (gfx/nvn/nvn_mtl.m), graphics-aniso.txt; from
-                                                             the next launch (samplers are made once); TOTK_ANISO first
-     ambient occlusion    off / 1.5x / 2x / 3x, default off  dm_gfx_ssao_* (gfx/nvn/totk_ssao.h, PR #1316), saved in ssao.txt
-                                                             (off or the strength and radius in percent); Tears of the
-                                                             Kingdom 1.4.3 and Breath of the Wild 1.9.0 only. Its shaders
-                                                             are always the patched ones on the Mac (off: the stock AO,
-                                                             bit for bit), so every choice acts at once (user 2026-10-30);
-                                                             TOTK_SSAO / _STRENGTH / _RADIUS decide first (greyed out)
    Input
      controller type      auto / Xbox / PlayStation / Switch runtime_gamepad_type_set (gamepad.m), saved
      DualSense bow trigger switch                            runtime_triggers_choose (gamepad_feedback.m), saved in
@@ -44,7 +35,18 @@
                                                              switches first, TOTK_RUMBLE_GAIN the strength (the row greyed
                                                              out); a device the run started without comes at the next
                                                              launch (its title says so)
-   Effects (Tears of the Kingdom 1.4.3; user 2026-10-30, after UltraCam's render distance and shader switches)
+   Effects (user 2026-10-30, after UltraCam's render distance and shader switches; the rows from FOV on are Tears of the
+   Kingdom 1.4.3's, greyed on other versions; "Reset to defaults" at the bottom right sets every row back to the game's own
+   and removes its file, a row the environment decides staying)
+     edge smoothing       switch                             taa_set (gfx/nvn/totk_taa.m)
+     anisotropic filtering off / 2x / 4x / 8x / 16x          dm_gfx_aniso_start (gfx/nvn/nvn_mtl.m), graphics-aniso.txt; from
+                                                             the next launch (samplers are made once); TOTK_ANISO first
+     ambient occlusion    off / 1.5x / 2x / 3x, default off  dm_gfx_ssao_* (gfx/nvn/totk_ssao.h, PR #1316), saved in ssao.txt
+                                                             (off or the strength and radius in percent); Tears of the
+                                                             Kingdom 1.4.3 and Breath of the Wild 1.9.0 only. Its shaders
+                                                             are always the patched ones on the Mac (off: the stock AO,
+                                                             bit for bit), so every choice acts at once (user 2026-10-30);
+                                                             TOTK_SSAO / _STRENGTH / _RADIUS decide first (greyed out)
      model detail distance 1x / 2x / 4x / 10x / 20x / 50x / runtime_lod_scale_set (game_patches_v143.c): the level of
                                                              detail a model gets at a distance is the one it had at
      100x                                                    1/K of it; graphics-lod.txt (x100); TOTK_LOD_SCALE first
@@ -408,6 +410,25 @@ static TOTKSettingRow *settings_aniso_row(void) {
   settingsAniso=v;settings_save_int("graphics-aniso.txt",v,"anisotropic filtering");
   dispatch_async(dispatch_get_main_queue(),^{settings_rebuild();});});   /* the title says whether it waits for the next launch */
 }
+/* The effects page's "Reset to defaults" (user 2026-10-30): every row of the page back to the game's own, its file removed;
+   a row the environment decides stays. Anisotropy goes back to off from the next launch, as any pick of it. */
+static void settings_effects_reset(void) {
+ if(!getenv("TOTK_TAA")){taa_set(0);runtime_setting_remove("graphics-taa.txt");}
+#ifdef SETTINGS_SSAO
+ if(!dm_gfx_ssao_locked()&&dm_gfx_ssao_live()){settingsSsao=0;dm_gfx_ssao_set(0);runtime_setting_remove("ssao.txt");}
+#endif
+ if(!dm_gfx_aniso_locked()){settingsAniso=0;runtime_setting_remove("graphics-aniso.txt");}
+#ifdef TOTK_GAME_V143
+ if(!runtime_fov_scale_locked())runtime_fov_scale_set(1);
+ if(!runtime_lod_scale_locked())runtime_lod_scale_set(1);
+ if(!runtime_far_scale_locked())runtime_far_scale_set(1);
+ dm_gfx_fxaa_set(1);dm_gfx_sharpen_set(0);
+ for(int i=0;i<dm_gfx_fx_count();i++)if(!dm_gfx_fx_on(i))dm_gfx_fx_set(i,1);
+ for(const char *const *f=(const char *const[]){"graphics-fov.txt","graphics-lod.txt","graphics-far.txt","graphics-fxaa.txt","graphics-sharpen.txt","graphics-effects.txt",NULL};*f;f++)
+  runtime_setting_remove(*f);
+#endif
+ fprintf(stderr,"[totk] settings: the effects page back to the defaults\n");
+}
 static NSArray<TOTKSettingRow *> *settings_rows(void) {
  NSMutableArray<TOTKSettingRow *> *rows=[NSMutableArray array];
  /* Display */
@@ -457,10 +478,6 @@ static NSArray<TOTKSettingRow *> *settings_rows(void) {
   [rows addObject:settings_row(aspect,choices,values,^int{
     float now=runtime_aspect_ratio();for(NSUInteger i=0;i<ratios.count;i++)if(aspect_near(now,ratios[i].doubleValue))return (int)i;return -1;},
    ^(int v){float r=ratios[(NSUInteger)v].floatValue;settingsPendingAspect=0;if(runtime_aspect_set_ratio(r)){runtime_front_resize_aspect(r);char word[32];snprintf(word,sizeof word,"%.8g",r);runtime_setting_save("graphics-aspect.txt",word,"aspect ratio");}})];}
- [rows addObject:settings_row(settings_text("边缘平滑（MetalFX 时间性）","Edge smoothing (MetalFX Temporal)"),nil,nil,
-  ^int{return taa_enabled();},^(int v){taa_set(v);settings_save_int("graphics-taa.txt",v,"edge smoothing");})];
- [rows addObject:settings_ssao_row()];
- [rows addObject:settings_aniso_row()];
  NSUInteger display=rows.count;
  /* Input */
  TOTKSettingRow *pad=settings_row(settings_text("手柄类型","Controller type"),@[settings_pad_auto_text(),@"Xbox",@"PlayStation",@"Switch"],
@@ -478,7 +495,11 @@ static NSArray<TOTKSettingRow *> *settings_rows(void) {
  [rows addObject:settings_gain_row()];
  [rows addObject:settings_feedback_row(1)];
  NSUInteger input=rows.count;
- /* Effects */
+ /* Effects (user 2026-10-30: edge smoothing, stronger AO and anisotropy moved here from the display page) */
+ [rows addObject:settings_row(settings_text("边缘平滑（MetalFX 时间性）","Edge smoothing (MetalFX Temporal)"),nil,nil,
+  ^int{return taa_enabled();},^(int v){taa_set(v);settings_save_int("graphics-taa.txt",v,"edge smoothing");})];
+ [rows addObject:settings_ssao_row()];
+ [rows addObject:settings_aniso_row()];
  [rows addObjectsFromArray:settings_effect_rows()];
  for(NSUInteger i=0;i<rows.count;i++)rows[i].page=i<display?SETTINGS_PAGE_DISPLAY:i<input?SETTINGS_PAGE_INPUT:SETTINGS_PAGE_EFFECTS;
  return rows;
@@ -594,6 +615,7 @@ static NSString *settings_pad_text(int action, const uint16_t *map, int family) 
 @property(strong) NSTextField *versionLabel;   /* the bottom-left corner */
 @property(strong) NSArray<NSButton *> *displayButtons;   /* the display page: contribute shaders, star the project */
 @property(strong) NSArray<NSButton *> *resetButtons;   /* the key bindings page: keyboard and mouse, controller */
+@property(strong) NSArray<NSButton *> *effectsButtons; /* the effects page: reset to defaults */
 @property(strong) NSMutableArray<TOTKBindingButton *> *bindingButtons;
 @property(strong) NSMutableArray<NSView *> *bindingTargets;   /* rows with controller buttons, then the reset buttons */
 @property(strong) NSTextField *padHeader;
@@ -720,6 +742,10 @@ enum { SETTINGS_W = 600, SETTINGS_ROW_H = 34, SETTINGS_GAP = 6, SETTINGS_TOP = 9
  for(NSButton *b in @[contrib,star]){b.controlSize=NSControlSizeSmall;b.font=[NSFont systemFontOfSize:11];b.refusesFirstResponder=YES;[b sizeToFit];
   b.frame=NSMakeRect(0,5,b.frame.size.width,24);b.wantsLayer=YES;[self addSubview:b];}
  self.displayButtons=@[star,contrib];
+ NSButton *resetEffects=[NSButton buttonWithTitle:settings_text("恢复默认","Reset to defaults") target:self action:@selector(resetEffects:)];
+ resetEffects.controlSize=NSControlSizeSmall;resetEffects.font=[NSFont systemFontOfSize:11];resetEffects.refusesFirstResponder=YES;[resetEffects sizeToFit];
+ resetEffects.frame=NSMakeRect(0,5,resetEffects.frame.size.width,24);resetEffects.wantsLayer=YES;[self addSubview:resetEffects];
+ self.effectsButtons=@[resetEffects];
  [self selectPage:g_settings_page];[self refresh];
  __weak TOTKSettingsPanel *weak=self;
  self.clickMonitor=[NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskLeftMouseDown|NSEventMaskRightMouseDown handler:^NSEvent *(NSEvent *e){
@@ -796,8 +822,8 @@ enum { SETTINGS_W = 600, SETTINGS_ROW_H = 34, SETTINGS_GAP = 6, SETTINGS_TOP = 9
    reset of the device shown (both resets with the list). */
 -(void)layoutFooter{
  BOOL bindings=self.page==SETTINGS_PAGE_BINDINGS;
- NSArray<NSButton *> *shown=self.page==SETTINGS_PAGE_DISPLAY?self.displayButtons:!bindings?@[]:self.drawings?@[self.resetButtons[g_settings_bindings_device?1:0],self.listToggle]:@[self.resetButtons[1],self.resetButtons[0],self.listToggle];
- for(NSButton *b in [@[self.resetButtons[0],self.resetButtons[1],self.listToggle] arrayByAddingObjectsFromArray:self.displayButtons])b.hidden=![shown containsObject:b];
+ NSArray<NSButton *> *shown=self.page==SETTINGS_PAGE_DISPLAY?self.displayButtons:self.page==SETTINGS_PAGE_EFFECTS?self.effectsButtons:!bindings?@[]:self.drawings?@[self.resetButtons[g_settings_bindings_device?1:0],self.listToggle]:@[self.resetButtons[1],self.resetButtons[0],self.listToggle];
+ for(NSButton *b in [[@[self.resetButtons[0],self.resetButtons[1],self.listToggle] arrayByAddingObjectsFromArray:self.displayButtons] arrayByAddingObjectsFromArray:self.effectsButtons])b.hidden=![shown containsObject:b];
  CGFloat right=self.panelW-14;
  for(NSButton *b in shown){b.frame=NSMakeRect(right-b.frame.size.width,5,b.frame.size.width,24);right-=b.frame.size.width+6;}
 }
@@ -829,6 +855,8 @@ enum { SETTINGS_W = 600, SETTINGS_ROW_H = 34, SETTINGS_GAP = 6, SETTINGS_TOP = 9
    [NSWorkspace.sharedWorkspace openURL:[NSURL URLWithString:@TOTK_CONTRIB_ISSUE_URL]];
    [NSWorkspace.sharedWorkspace activateFileViewerSelectingURLs:@[[NSURL fileURLWithPath:path]]];});});
 }
+/* The effects page's reset: every row back to the game's own; the panel is made again so the titles say what is in force. */
+-(void)resetEffects:(id)sender{(void)sender;settings_effects_reset();dispatch_async(dispatch_get_main_queue(),^{settings_rebuild();});}
 /* The project's GitHub page, where the player stars it (as the launcher's star button). */
 -(void)star:(id)sender{(void)sender;[NSWorkspace.sharedWorkspace openURL:[NSURL URLWithString:@TOTK_REPO_URL]];
  [self note:settings_text("谢谢支持！在打开的 GitHub 页面右上角点 Star","Thank you! Click Star at the top right of the GitHub page")];}
@@ -837,7 +865,8 @@ enum { SETTINGS_W = 600, SETTINGS_ROW_H = 34, SETTINGS_GAP = 6, SETTINGS_TOP = 9
 -(void)updateTargets{
  [self.controllerTargets removeAllObjects];self.padOrder=@[];
  if(self.page!=SETTINGS_PAGE_BINDINGS){for(TOTKSettingRow *r in self.rows)[self.controllerTargets addObject:r.control.superview];
-  for(NSButton *b in self.displayButtons.reverseObjectEnumerator)if(!b.hidden)[self.controllerTargets addObject:b];}
+  for(NSButton *b in self.displayButtons.reverseObjectEnumerator)if(!b.hidden)[self.controllerTargets addObject:b];
+  for(NSButton *b in self.effectsButtons)if(!b.hidden)[self.controllerTargets addObject:b];}
  else if(!self.drawings){[self.controllerTargets addObjectsFromArray:self.bindingTargets];
   for(NSButton *b in @[self.resetButtons[0],self.resetButtons[1],self.listToggle])if(!b.hidden&&b.enabled)[self.controllerTargets addObject:b];}
  else{

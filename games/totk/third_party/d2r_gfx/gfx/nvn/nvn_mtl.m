@@ -6476,7 +6476,8 @@ int dm_gfx_aniso_locked(void) { return getenv("TOTK_ANISO") != NULL; }
 int dm_gfx_aniso(void) {
     int v = atomic_load(&g_aniso_now);
     if (v < 0) { const char *e = getenv("TOTK_ANISO"); v = e ? atoi(e) : atomic_load(&g_aniso_saved); v = v < 0 ? 0 : v > 16 ? 16 : v;
-                 int was = -1; if (!atomic_compare_exchange_strong(&g_aniso_now, &was, v)) v = was; }
+                 int was = -1; if (atomic_compare_exchange_strong(&g_aniso_now, &was, v)) { if (v > 1) MLOG("各向异性过滤 %dx（材质贴图；%s）", v, getenv("TOTK_ANISO") ? "TOTK_ANISO" : "设置面板"); }
+                 else v = was; }
     return v;
 }
 static id<MTLSamplerState> samp_by_id(int sid) {   // 调用方持 g_rmu | Caller holds g_rmu

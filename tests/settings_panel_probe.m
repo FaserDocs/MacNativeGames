@@ -420,6 +420,16 @@ int main(int argc, const char **argv) { @autoreleasepool {
     flip(@"FXAA anti-aliasing", YES); assert(fakeFxaa && !strcmp(savedWord, "on"));
     pick(@"Sharpening", @"50%"); assert(fakeSharpen == 50 && !strcmp(savedName, "graphics-sharpen.txt") && !strcmp(savedWord, "50"));
     pick(@"Sharpening", @"Off (as the game has it)"); assert(!fakeSharpen);
+    /* "Reset to defaults" (the effects page's bottom right): every row back to the game's own, the files removed. */
+    pick(@"Field of view (FOV)", @"1.3×"); pick(@"Model detail distance (LOD)", @"10×"); pick(@"Render distance", @"25%");
+    flip(@"FXAA anti-aliasing", NO); pick(@"Sharpening", @"75%"); flip(@"Bloom", NO);
+    [settingsPanel selectPage:SETTINGS_PAGE_EFFECTS]; tick();
+    NSButton *resetEffects = settingsPanel.effectsButtons[0];
+    assert(!resetEffects.hidden && [resetEffects.title isEqualToString:@"Reset to defaults"] && [settingsPanel.controllerTargets containsObject:resetEffects]);
+    [resetEffects performClick:nil]; tick();
+    assert(runtime_fov_scale() == 1 && runtime_lod_scale() == 1 && runtime_far_scale() == 1 && fakeFxaa && !fakeSharpen && fakeFxOn[0] && fakeFxOn[1]);
+    assert(!strcmp(removedName, "graphics-effects.txt") && settingsPanel.page == SETTINGS_PAGE_EFFECTS);
+    [settingsPanel selectPage:SETTINGS_PAGE_DISPLAY]; tick();
     pick(@"Model detail distance (LOD)", @"1x (as the game has it)"); pick(@"Render distance", @"100% (as the game has it)"); assert(runtime_lod_scale() == 1 && runtime_far_scale() == 1);
     assert(switched(@"Bloom")); flip(@"Bloom", NO); assert(!fakeFxOn[1] && !strcmp(savedName, "graphics-effects.txt") && !strcmp(savedWord, "bloom"));
     flip(@"Ambient occlusion", NO); assert(!strcmp(savedWord, "ao bloom"));
@@ -487,14 +497,15 @@ int main(int argc, const char **argv) { @autoreleasepool {
     /* Pages: Display, Input and Key bindings; the page shown last opens again. */
     press(18); assert(settingsOpen);
     [settingsPanel selectPage:SETTINGS_PAGE_DISPLAY];
-    assert(settingsPanel.rows.count == 9 && [settingsPanel.rows[0].title isEqualToString:@"Overlay"]);
+    assert(settingsPanel.rows.count == 6 && [settingsPanel.rows[0].title isEqualToString:@"Overlay"]);   /* edge smoothing, AO and anisotropy are on the effects page */
     /* The display page's bottom right: contribute shaders and star the project, after the rows for a controller; the
        version stays clear of them; a result shows for a moment where the version is. */
     NSButton *contribute = settingsPanel.displayButtons[1], *starButton = settingsPanel.displayButtons[0];
     assert([contribute.title isEqualToString:@"Contribute shaders and pipelines"] && [starButton.title isEqualToString:@"⭐ Star the project"]);
     assert(!contribute.hidden && !starButton.hidden && NSMaxX(contribute.frame) < NSMinX(starButton.frame) && NSMaxX(starButton.frame) <= settingsPanel.frame.size.width - 14);
     assert(NSMaxX(settingsPanel.versionLabel.frame) <= NSMinX(contribute.frame) && contribute.frame.origin.y < 34 && starButton.frame.origin.y < 34);
-    assert(settingsPanel.controllerTargets.count == 11 && settingsPanel.controllerTargets[9] == contribute && settingsPanel.controllerTargets[10] == starButton);
+    assert(settingsPanel.controllerTargets.count == 8 && settingsPanel.controllerTargets[6] == contribute && settingsPanel.controllerTargets[7] == starButton);
+    assert(settingsPanel.effectsButtons[0].hidden);   /* "Reset to defaults" only on the effects page */
     NSString *versionText = settingsPanel.versionLabel.stringValue;
     [settingsPanel note:@"Thank you!"]; assert([settingsPanel.versionLabel.stringValue isEqualToString:@"Thank you!"]);
     settingsPanel.versionLabel.stringValue = versionText; settingsPanel.versionLabel.frame = NSMakeRect(18, 9, 230, 16);
@@ -522,14 +533,16 @@ int main(int argc, const char **argv) { @autoreleasepool {
     assert([settingsPanel.versionLabel.stringValue isEqualToString:@"Ver. " TOTK_GAME_VERSION " · build abc1234"]);
     /* The overlay keeps its build line too (user 2026-10-25; after PR #1210). */
     if (hudBox) { [(TOTKHudBox *)hudBox refresh]; assert([((TOTKHudBox *)hudBox).label.stringValue containsString:@"abc1234"]); }
+    [settingsPanel selectPage:SETTINGS_PAGE_EFFECTS]; tick();   /* the longest page sets the panel's height */
     NSRect lastBand = [settingsPanel.rows.lastObject.control.superview convertRect:settingsPanel.rows.lastObject.control.superview.bounds toView:settingsPanel];
     NSRect version = settingsPanel.versionLabel.frame;
     assert(NSMinX(version) <= 20 && NSMinY(version) >= 6 && NSMaxY(version) <= NSMinY(lastBand) - 6 && NSMinY(lastBand) - NSMaxY(version) <= 14);
     for (NSView *view in settingsPanel.subviews)
-        if ([view isKindOfClass:NSButton.class] && NSMaxY(view.frame) <= NSMinY(lastBand))   /* below the rows only the display page's two buttons */
-            assert(view.hidden || (settingsPanel.page == SETTINGS_PAGE_DISPLAY && [settingsPanel.displayButtons containsObject:(NSButton *)view]));
+        if ([view isKindOfClass:NSButton.class] && NSMaxY(view.frame) <= NSMinY(lastBand))   /* below the rows only the effects page's reset */
+            assert(view.hidden || [settingsPanel.effectsButtons containsObject:(NSButton *)view]);
     for (NSView *view in settingsPanel.subviews)
         if ([view isKindOfClass:NSTextField.class] && view != settingsPanel.versionLabel) assert(NSMinY(view.frame) > NSMinY(lastBand));
+    [settingsPanel selectPage:SETTINGS_PAGE_DISPLAY]; tick();
 
     /* Key bindings: the default layout; a key, a modifier, a mouse button and a controller button bound (an input in use
        swaps places), key 1 cancels, Command keys pass, a right-click clears, the two resets. */
