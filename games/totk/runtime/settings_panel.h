@@ -1078,7 +1078,8 @@ enum { SETTINGS_W = 600, SETTINGS_ROW_H = 34, SETTINGS_GAP = 6, SETTINGS_TOP = 9
 -(BOOL)controllerEnabled:(NSInteger)i{
  if(i<0||i>=(NSInteger)self.controllerTargets.count)return NO;
  if(self.page==SETTINGS_PAGE_BINDINGS)return YES;
- TOTKSettingRow *r=self.rows[i];return r.set!=nil&&r.control.enabled;
+ if(i<(NSInteger)self.rows.count){TOTKSettingRow *r=self.rows[i];return r.set!=nil&&r.control.enabled;}
+ return ((NSControl *)self.controllerTargets[i]).enabled;   /* a button after the rows */
 }
 /* The controller's place: drawn only once a controller has moved in the panel (g_settings_controller_active). On the
    controller drawing it is the picked button (outlined there), not a border. */
@@ -1129,6 +1130,7 @@ enum { SETTINGS_W = 600, SETTINGS_ROW_H = 34, SETTINGS_GAP = 6, SETTINGS_TOP = 9
   for(TOTKBindingButton *box in self.bindingButtons)if(box.superview==target&&box.slot==2){[self beginCapture:box];return;}
   return;
  }
+ if(i>=(NSInteger)self.rows.count){if(select)[(NSButton *)self.controllerTargets[i] performClick:nil];return;}   /* a button after the rows */
  TOTKSettingRow *r=self.rows[i];
  if(r.slider){if(select)return;NSSlider *s=(NSSlider *)r.control;s.intValue=MAX(r.sliderMin,MIN(r.sliderMax,s.intValue+step*5));}
  else if(r.choices){
