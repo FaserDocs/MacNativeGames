@@ -117,6 +117,8 @@ static CVReturn vsync_callback(CVDisplayLinkRef link,const CVTimeStamp *now,cons
    corners and this is the larger centred shortcut box. */
 @implementation TOTKShortcutHelp
 static NSString *shortcut_text(void){
+ /* This port's number keys (runtime/input.c): 1 the HUD, 2 interpolation, 3 the MetalFX output upscale. There is no
+    aspect or output-mode row (this game has no such modes), so the list stops at 3. */
  const char *interp;
  switch(mfx_enabled()){
   case MFX_30:interp="30+30";break;
@@ -124,14 +126,10 @@ static NSString *shortcut_text(void){
   case MFX_MAX:interp=TOTK_UI("不限帧","unlimited");break;
   default:interp=TOTK_UI("关闭","off");break;
  }
- uint64_t size=runtime_output_size_current();unsigned w=(uint32_t)size,h=(uint32_t)(size>>32);
- NSString *picture;
- if(mfxup_output_enabled())picture=@"MetalFX 2K";
- else if(w==2560&&h==1440)picture=@(TOTK_UI("原生 2K","native 2K"));
- else if(w!=1920||h!=1080)picture=[NSString stringWithFormat:@(TOTK_UI("原生 %u×%u","native %u×%u")),w,h];
- else picture=@(TOTK_UI("关闭","off"));
- return [NSString stringWithFormat:@(TOTK_UI("快捷键说明\n1  显示 / 隐藏所有提示\n2  补帧：当前 %@（按键切换）\n3  画质：当前 %@（按键切换）\n4  21:9 宽屏：开 / 关","Shortcuts\n1  Show / hide all overlays\n2  Interpolation: %@ (current; press to cycle)\n3  Picture: %@ (current; press to cycle)\n4  Ultrawide 21:9: on / off")),[NSString stringWithUTF8String:interp],picture];
+ const char *picture=mfxup_output_enabled()?TOTK_UI("MetalFX 升分","MetalFX upscale"):TOTK_UI("关闭","off");
+ return [NSString stringWithFormat:@(TOTK_UI("快捷键\n1  提示：全部 / 仅 FPS / 关\n2  补帧：%@（按键切换）\n3  画质：%@（按键切换）","Shortcuts\n1  Overlay: all / FPS only / off\n2  Interpolation: %@ (press to cycle)\n3  Picture: %@ (press to cycle)")),[NSString stringWithUTF8String:interp],[NSString stringWithUTF8String:picture]];
 }
+
 -(instancetype)initWithFrame:(NSRect)frame{if((self=[super initWithFrame:frame])){int compact=hud_compact();self.wantsLayer=YES;self.layer.backgroundColor=[NSColor colorWithCalibratedWhite:0.04 alpha:compact?0.72:0.86].CGColor;self.layer.cornerRadius=compact?7:14;self.layer.borderWidth=1;self.layer.borderColor=[NSColor colorWithCalibratedWhite:1 alpha:compact?0.14:0.2].CGColor;
  self.label=[NSTextField labelWithString:shortcut_text()];self.label.font=[NSFont systemFontOfSize:17 weight:NSFontWeightMedium];self.label.textColor=NSColor.whiteColor;self.label.alignment=NSTextAlignmentCenter;self.label.maximumNumberOfLines=0;self.label.lineBreakMode=NSLineBreakByWordWrapping;self.label.frame=NSInsetRect(self.bounds,20,18);self.label.autoresizingMask=NSViewWidthSizable|NSViewHeightSizable;[self addSubview:self.label];
  if(compact){self.label.alignment=NSTextAlignmentLeft;self.label.lineBreakMode=NSLineBreakByClipping;}
@@ -147,9 +145,9 @@ static NSString *shortcut_text(void){
  int lines=fps_overlay_full_hud()?4:1;   // all: FPS, shaders, render pipelines, load; FPS only: the first
  for(int i=0;i<lines;i++){char t[128];int hl=0;if(!hud_snapshot(i,t,sizeof t,&hl))continue;
   [a appendAttributedString:[[NSAttributedString alloc] initWithString:[([NSString stringWithUTF8String:t] ?: @"") stringByAppendingString:@"\n"] attributes:@{NSFontAttributeName:mono,NSForegroundColorAttributeName:hl?yellow:green}]];}
- if(a.length&&fps_overlay_full_hud()){NSMutableParagraphStyle *gap=[NSMutableParagraphStyle new];gap.paragraphSpacingBefore=4;
-  [a appendAttributedString:[[NSAttributedString alloc] initWithString:shortcut_text() attributes:@{NSFontAttributeName:small,NSForegroundColorAttributeName:[NSColor colorWithCalibratedWhite:0.75 alpha:1],NSParagraphStyleAttributeName:gap}]];}
- else [a appendAttributedString:[[NSAttributedString alloc] initWithString:shortcut_text() attributes:@{NSFontAttributeName:small,NSForegroundColorAttributeName:[NSColor colorWithCalibratedWhite:0.75 alpha:1]}]];
+ /* Compact box: the monitoring lines only. The key list is a separate overlay (TOTK_HUD=corners shows it), so the two
+    HUD features no longer sit stacked in one panel. */
+ (void)small;
  if([a isEqualToAttributedString:self.label.attributedStringValue])return;
  self.label.attributedStringValue=a;NSSize z=[self.label sizeThatFits:NSMakeSize(CGFLOAT_MAX,CGFLOAT_MAX)];self.textSize=NSMakeSize(ceil(z.width),ceil(z.height));[self position];}
 -(NSView *)hitTest:(NSPoint)p{(void)p;return nil;}

@@ -64,15 +64,23 @@ static void user_input(const char *what){
  fprintf(stderr,"[input] user input (%s)%s%s\n",what,agent?": the user is playing this test session of ":"",agent?owner:"");
 }
 /* Keys from the window are the user's (their layout); scripted and auto-load presses use the synthetic entry (the fixed
-   layout above). Key 1 (Mac key code 18) opens and closes the settings panel (frontend.m) from either; held-key repeats do
-   not toggle it. Keys 2-7 are no shortcuts any more (user 2026-10-25: the panel replaces them). */
-enum { KEY_SETTINGS = KEYMAP_SETTINGS_KEY };
+   layout above). The number keys are this port's shortcuts, from either path, held-key repeats do not fire them:
+   1 cycles the HUD (all lines / FPS only / off), 2 cycles MetalFX frame interpolation (off -> 30+30 -> half the refresh
+   rate -> every frame), 3 turns the MetalFX output upscale on and off, 4 is reserved (TotK's aspect key; this game has
+   no aspect patch). TotK's in-game settings panel is not ported, so key 1 does the HUD rather than opening it. */
+enum { KEY_SETTINGS = KEYMAP_SETTINGS_KEY, KEY_INTERP_TOGGLE = 19, KEY_OUTPUT_MODE_CYCLE = 20, KEY_ASPECT_TOGGLE = 21 };
 void runtime_input_key_synthetic(unsigned code,int down){if(code>=128)return;pthread_mutex_lock(&inputLock);int press=down&&!keys[code];if(down&&!keys[code])pending|=button(code);keys[code]=(unsigned char)!!down;held_buttons_locked();pthread_mutex_unlock(&inputLock);
- if(press&&code==KEY_SETTINGS)runtime_settings_toggle();}
+ if(press&&code==KEY_SETTINGS)runtime_settings_toggle();
+ if(press&&code==KEY_INTERP_TOGGLE){extern void dm_gfx_set_flag(const char *name,int v);dm_gfx_set_flag("mfx_interp",-1);}
+ if(press&&code==KEY_OUTPUT_MODE_CYCLE)runtime_output_mode_cycle();
+ if(press&&code==KEY_ASPECT_TOGGLE)runtime_aspect_toggle();}
 void runtime_input_key(unsigned code,int down){
  if(code>=128)return;if(down)user_input("keyboard");
  pthread_mutex_lock(&inputLock);int press=down&&!held[code];held[code]=(unsigned char)!!down;held_changed_locked();pthread_mutex_unlock(&inputLock);
  if(press&&code==KEY_SETTINGS)runtime_settings_toggle();
+ if(press&&code==KEY_INTERP_TOGGLE){extern void dm_gfx_set_flag(const char *name,int v);dm_gfx_set_flag("mfx_interp",-1);}
+ if(press&&code==KEY_OUTPUT_MODE_CYCLE)runtime_output_mode_cycle();
+ if(press&&code==KEY_ASPECT_TOGGLE)runtime_aspect_toggle();
 }
 /* A mouse button in mouse mode (runtime/gamepad.m: 0 left, 1 right, 2 middle, 3 and 4 the side buttons). */
 void runtime_input_mouse(int button,int down){

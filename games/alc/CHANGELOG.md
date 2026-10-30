@@ -686,3 +686,23 @@ should be Astral Chain's (interpolation mode, MetalFX output, HUD, key bindings)
 first presented frame 0.198 s, zero GPU errors; key 1 cycles HUD all -> FPS only -> off -> all (log lines and three
 window screenshots); the HUD shows the four lines. Key bindings, mouse mode and rumble/gyro reach the game through the
 merged files but were not exercised by hand yet.
+
+### 2026-10-30: the two HUD features un-stacked, and the number keys restored
+
+Two problems a player hit at once:
+
+- **The monitoring lines and the shortcut list sat in one panel.** The compact corner box appended the key list under the
+  FPS / shader / render-pipeline / load lines, so the two HUD features read as one duplicated block — and the list was
+  TotK's text, naming rows this game does not have ("3 画质: MetalFX 2K", "4 21:9 宽屏"). The box now carries the
+  monitoring lines only; the key list is its own overlay (the non-compact TOTK_HUD=corners view), and its text is this
+  port's keys.
+- **2, 3 and 4 stopped working.** The merged `input.c` came from TotK, where keys 2–7 are deliberately no shortcuts
+  ("the panel replaces them"), so only key 1 survived the swap. The port's own dispatch is back on both input paths
+  (window keys through the player layout, synthetic keys for scripts): 1 cycles the HUD (all / FPS only / off),
+  2 cycles MetalFX frame interpolation, 3 toggles the MetalFX output upscale; 4 is left unbound (this game has no
+  aspect patch — the key answers "not offered").
+
+Verified live with the log and screenshots: key 1 -> `HUD FPS only` -> `HUD off` -> `HUD all` with the box showing
+exactly the four monitoring lines and no key list; key 2 -> `mfx_interp = 1: 30+30`; key 3 -> `key 3: MetalFX output
+upscale off`. One boot hit the known `reserve guest stack, heap and alias regions` race (macOS address layout, B4) and
+succeeded on the retry.
