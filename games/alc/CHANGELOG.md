@@ -746,3 +746,27 @@ but their rows are built from the code above.
   port's internal resolution is an exefs patch the launcher picks, and there is no aspect patch); they are left out now,
   so the page holds only rows that do something: Overlay, Frame lock, Frame interpolation. (The frame lock is real since
   this port: `nvn_fps_lock_set` paces at exactly the chosen rate and the adaptive logic-step floor follows it.)
+
+### 2026-10-30: the save path and the shader seed follow the TotK/BotW scheme
+
+Both are now the same mechanism the other ports in this repository use, so one set of habits (and tools) manages every
+game:
+
+- **Save and settings paths**: the launcher derived its data folder from a hardcoded "ALC"; it now reads `GAME_FOLDER` from
+  `game_version.h` (added with the other shared names: `GAME_NAME`, `GAME_LOG`, `GAME_CONTRIB_*`), exactly as TotK's and
+  BotW's launchers do. The layout is therefore the repository-wide one:
+  `~/Library/Application Support/MacNativeGames/<GAME_FOLDER>/{profile,save,game-slot}`, profile holds the account and
+  the save data (`profile/save/<account id>`), `game-slot` is the one-game-at-a-time slot. Existing saves stay where they
+  were (GAME_FOLDER is "ALC"), so no migration was needed.
+- **Shader seed**: the app can now carry prepared translations (`shader-seed/` in the bundle's Resources, made with
+  `make shader-seed` from this machine's cache and shipped by `make app`), and the runtime reads them through TotK's own
+  switch names: `TOTK_SHADER_SEED_DIR` (the launcher points it at the bundle) and `TOTK_SHADER_SEED=off` to skip it.
+  On the first start the seed's files and their per-shader index files are imported into the session's cache once (a
+  `.seed-imported` marker stops later walks of the folder); a lookup that still misses falls back to reading the seed in
+  place, and anything new is translated as before by the runtime service. `make shader-seed` re-runs after playing to
+  refresh what the app ships.
+
+**Verified**: with an empty cache (`TOTK_SHADER_CACHE=/tmp/seedtest`) and the bundle's seed, the run imported 1062 of
+1062 files and presented its first frame at **0.305 s** — the same cold start without a seed took 25.99 s when this work
+folder was rebuilt that morning; on this machine's already-warm cache the import is a no-op (0 files, the seed was made
+from it) and the boot is unchanged. The launcher's data folder resolves to the same path as before (GAME_FOLDER "ALC").

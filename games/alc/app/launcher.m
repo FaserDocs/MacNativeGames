@@ -14,6 +14,7 @@
    Patches come from <work>/patches (scripts/prepare_patches.py); a missing one is left out and the
    window says so. */
 #import <Cocoa/Cocoa.h>
+#include "../runtime/game_version.h"   /* GAME_FOLDER / GAME_NAME: the per-game names every port shares */
 #include <errno.h>
 #include <string.h>
 #include <unistd.h>
@@ -236,10 +237,16 @@ int main(int argc, char **argv) {
         if (!l.launch) return 0;
         NSUserDefaults *d = NSUserDefaults.standardUserDefaults;
         NSString *work = work_folder(), *home = NSHomeDirectory();
-        NSString *data = [home stringByAppendingPathComponent:@"Library/Application Support/MacNativeGames/ALC"];
+        /* Same layout as every port in this repository: ~/Library/Application Support/MacNativeGames/<GAME_FOLDER>
+           (game_version.h), with profile / game-slot / RomFS proof inside — one place to manage all games' saves. */
+        NSString *data = [home stringByAppendingPathComponent:[NSString stringWithFormat:@"Library/Application Support/MacNativeGames/%s", GAME_FOLDER]];
         NSString *logs = [home stringByAppendingPathComponent:@"Library/Logs/MacNativeGames"];
         NSString *profile = [data stringByAppendingPathComponent:@"profile"], *slot = [data stringByAppendingPathComponent:@"game-slot"];
         if (!make_dir(profile) || !make_dir(slot) || !make_dir(logs)) { fail([NSString stringWithFormat:@"%@", data]); return 1; }
+        /* The shader seed shipped inside the app (make shader-seed; TotK's TOTK_SHADER_SEED_DIR): read in place, so a
+           first run with it translates nothing and starts at full pace. */
+        { NSString *seed = [NSBundle.mainBundle.resourcePath stringByAppendingPathComponent:@"shader-seed"];
+          if ([NSFileManager.defaultManager fileExistsAtPath:seed]) setenv("TOTK_SHADER_SEED_DIR", seed.fileSystemRepresentation, 1); }
         if (chdir(work.fileSystemRepresentation)) { fail(work); return 1; }   // the runtime reads extracted/ and rewritten/ relative to it
 
         int fps = (int)[d integerForKey:@"fps"]; NSMutableArray *patches = [NSMutableArray array];

@@ -5039,11 +5039,32 @@ static id<MTLLibrary> shader_lib_prebuilt(NSData *src) {
     return lib;
 }
 #endif
+/* The shader seed (TOTK_SHADER_SEED_DIR, the same name and meaning as in the TotK tree): a read-only folder of
+   translations the app carries (Contents/Resources/shader-seed), consulted when this session's cache lacks an entry and
+   read in place — first runs then start without translating anything, and the cache stays the place new shaders land. */
+static NSString *totk_seed_dir(void) {
+    static NSString *dir;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        const char *e = getenv("TOTK_SHADER_SEED_DIR");
+        if (e && *e && [NSFileManager.defaultManager fileExistsAtPath:@(e)]) { dir = @(e); MLOG("[nvn] 着色器种子：%s", e); }
+    });
+    return dir;
+}
+/* <name>.<ext> in this session's cache, else in the seed; nil when neither has it. */
+static NSString *seed_or_cache_file(NSString *name, NSString *ext) {
+    NSString *p = [totk_rt_dir() stringByAppendingFormat:@"/%@.%@", name, ext];
+    if ([NSFileManager.defaultManager fileExistsAtPath:p]) return p;
+    NSString *seed = totk_seed_dir();
+    if (!seed) return nil;
+    NSString *q = [seed stringByAppendingFormat:@"/%@.%@", name, ext];
+    return [NSFileManager.defaultManager fileExistsAtPath:q] ? q : nil;
+}
 static NvShader *shader_load(NSString *pc, int stage) {
     NSError *e = nil;
     // TOTK: runtime translations are MSL source compiled here (macOS allows runtime compilation); the OS caches compiled code.
-    NSString *rt_src = [NSString stringWithFormat:@"%@/%@.metal", totk_rt_dir(), pc];
-    int rt = [NSFileManager.defaultManager fileExistsAtPath:rt_src];
+    NSString *rt_src = seed_or_cache_file(pc, @"metal");
+    int rt = rt_src != nil;
     NSString *lp = [NSString stringWithFormat:@"%@/%@.metallib", g_msl_dir, pc];
     id<MTLLibrary> lib = nil;
     if (rt) {
@@ -5061,7 +5082,7 @@ static NvShader *shader_load(NSString *pc, int stage) {
     } else lib = lib_from_file(lp, &e);
     if (rt) { uint64_t pre = atomic_load(&g_rt_prebuilt), com = atomic_load(&g_rt_compiled);
               if ((pre + com) % 200 == 1) MLOG("着色器库：预编译加载 %llu 个，现编 %llu 个", (unsigned long long)pre, (unsigned long long)com); }
-    NSData *jd = [NSData dataWithContentsOfFile:[NSString stringWithFormat:@"%@/%@.json", rt ? totk_rt_dir() : g_msl_dir, pc]];
+    NSData *jd = rt ? [NSData dataWithContentsOfFile:(seed_or_cache_file(pc, @"json") ?: @"")] : [NSData dataWithContentsOfFile:[NSString stringWithFormat:@"%@/%@.json", g_msl_dir, pc]];
     NSDictionary *j = jd ? [NSJSONSerialization JSONObjectWithData:jd options:0 error:nil] : nil;
     if (!lib || !j) { MLOG("【红】加载着色器失败 %s：%s", pc.UTF8String, e ? e.localizedDescription.UTF8String : "无反射 json"); return nil; }
     if (![j[@"chain"] isEqual:@DMSH_CHAIN]) { MLOG("【红】着色器 %s 的翻译链版本 %s 与本宿主期望的 %s 不符", pc.UTF8String, [[j[@"chain"] description] UTF8String], DMSH_CHAIN); return nil; }
@@ -6405,6 +6426,8 @@ static int warm_available(NSString *key) {
     NSString *rt = totk_rt_dir();
     int have = [fm fileExistsAtPath:[rt stringByAppendingFormat:@"/%@.metal", key]] ||
                [fm fileExistsAtPath:[rt stringByAppendingFormat:@"/%@.metallib", key]] ||
+               (totk_seed_dir() && ([fm fileExistsAtPath:[totk_seed_dir() stringByAppendingFormat:@"/%@.metal", key]] ||
+                                    [fm fileExistsAtPath:[totk_seed_dir() stringByAppendingFormat:@"/%@.metallib", key]])) ||
                [fm fileExistsAtPath:[g_msl_dir stringByAppendingFormat:@"/%@.metallib", key]];
     if (!have) {
         static NSMutableSet *missing; static dispatch_once_t once;
@@ -6420,8 +6443,8 @@ static NvShader *warm_shader_load(NSString *key, int stage) {
        instead of a red "cannot open" per pipeline that names it (2026-10-16 night: 42 such lines in one session). */
     static NSMutableSet<NSString *> *missing; static dispatch_once_t once; dispatch_once(&once, ^{ missing = [NSMutableSet set]; });
     @synchronized (missing) { if ([missing containsObject:key]) return nil; }
-    NSString *msl = [NSString stringWithContentsOfFile:[totk_rt_dir() stringByAppendingFormat:@"/%@.metal", key]
-                                                encoding:NSUTF8StringEncoding error:nil];
+    NSString *msl_path = seed_or_cache_file(key, @"metal");
+    NSString *msl = msl_path ? [NSString stringWithContentsOfFile:msl_path encoding:NSUTF8StringEncoding error:nil] : nil;
     if (!msl && ![NSFileManager.defaultManager fileExistsAtPath:[totk_rt_dir() stringByAppendingFormat:@"/%@.metallib", key]] &&
         ![NSFileManager.defaultManager fileExistsAtPath:[NSString stringWithFormat:@"%@/%@.metallib", g_msl_dir, key]]) {
         @synchronized (missing) { if (![missing containsObject:key]) { [missing addObject:key]; g_warm_missing++; } }

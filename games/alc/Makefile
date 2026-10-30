@@ -77,6 +77,19 @@ boot: runtime
 	@mkdir -p "$(dir $(ALC_LOG))"
 	cd "$(WORK)" && TOTK_FREE_CORES=1 TOTK_GPU_ALLOW_SUBMIT=1 TOTK_GPU_MIDCLEAR=1 ./build/alc-native rewritten/v101 boot 2> "$(abspath $(ALC_LOG))"; echo "exit $$?; log: $(ALC_LOG)"
 
+# The shader seed the app carries (the TotK tree's mechanism, TOTK_SHADER_SEED_DIR): the translations this machine's
+# cache holds, copied into the bundle's Resources/shader-seed. A first run then translates nothing for what the seed
+# already has; new shaders still land in the work folder's cache. Re-run after playing to refresh it.
+.PHONY: shader-seed
+SEED_CACHE ?= $(OUT)/shader-cache
+shader-seed:
+	@{ ls -d "$(SEED_CACHE)"/*/ 2>/dev/null | head -1; } | while read d; do \
+	  n=$$(find "$$d" -name '*.metal' | wc -l | tr -d ' '); \
+	  echo "shader seed: $$n translations from $$d"; \
+	  rm -rf "shader-seed"; mkdir -p "shader-seed"; \
+	  cp "$$d"/*.metal "$$d"/*.json "shader-seed"/ 2>/dev/null || true; \
+	done; [ -d shader-seed ] || { echo "no shader cache yet (play once first)"; exit 1; }
+
 # The player's mods, made into checked tables: exefs patches (mods/1.0.1/<name>/exefs/*.pchtxt) -> <work>/patches,
 # RomFS mods (mods/<name>/romfs/...) -> their manifest.tsv (sizes and SHA-256 of the replacements and the originals).
 .PHONY: patches mods app
@@ -98,6 +111,9 @@ $(OUT)/AppIcon.icns:
 	 else echo "no GAME= / KEYS=: the app gets no icon"; fi
 app: runtime shader-tools $(OUT)/launcher $(OUT)/AppIcon.icns
 	rm -rf "$(APP)" && mkdir -p "$(APP)/Contents/MacOS" "$(APP)/Contents/Resources"
+	@if [ -d shader-seed ]; then rm -rf "$(APP)/Contents/Resources/shader-seed"; cp -R shader-seed "$(APP)/Contents/Resources/shader-seed"; \
+	   echo "shader seed: $$(find "$(APP)/Contents/Resources/shader-seed" -name '*.metal' | wc -l | tr -d ' ') translations carried"; \
+	 else echo "no shader-seed/ (run make shader-seed after playing to ship one)"; fi
 	cp "$(OUT)/launcher" "$(APP)/Contents/MacOS/Astral Chain"
 	[ -f "$(OUT)/AppIcon.icns" ] && cp "$(OUT)/AppIcon.icns" "$(APP)/Contents/Resources/" || true
 	printf '%s\n' '<?xml version="1.0" encoding="UTF-8"?>' \
