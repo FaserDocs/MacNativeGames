@@ -8,7 +8,7 @@ GFX_HEADERS := $(wildcard third_party/d2r_gfx/gfx/nvn/*.h third_party/d2r_gfx/gf
 GFX_FLAGS := -std=gnu11 -Wno-error -Wno-unused-function -Wno-unused-parameter -fobjc-arc -DGAME_ACNH=1 -Ithird_party/d2r_gfx/gfx/nvn/include -I$(OUT) -include $(OUT)/version-config.h
 RUNTIME_SRC := $(filter-out runtime/frontend_ios.m,$(wildcard runtime/*.c runtime/*.m runtime/*.S))
 RUNTIME_HEADERS := $(wildcard runtime/*.h)
-GENERATED := $(OUT)/runtime_tables.h $(OUT)/romfs_config.h $(OUT)/shared_fonts_config.h $(OUT)/version-config.h $(OUT)/fps_config.h
+GENERATED := $(OUT)/runtime_tables.h $(OUT)/romfs_config.h $(OUT)/shared_fonts_config.h $(OUT)/version-config.h $(OUT)/fps_config.h $(OUT)/dlc_config.h
 
 .PHONY: all prepare runtime clean
 
@@ -23,6 +23,10 @@ $(OUT)/version-config.h:
 $(OUT)/fps_config.h:
 	@mkdir -p "$(OUT)"
 	printf '#define ACNH_FPS_ENABLED 0\n' > "$@"
+
+$(OUT)/dlc_config.h:
+	@mkdir -p "$(OUT)"
+	printf '#define ACNH_DLC_COUNT 0\n#define ACNH_DLC_MARKER "MNG_ACNH_DLC:none"\n' > "$@"
 
 $(OUT)/obj/%.o: % $(GFX_HEADERS) $(OUT)/version-config.h
 	@mkdir -p "$(dir $@)"

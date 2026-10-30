@@ -13,7 +13,8 @@ not pinned by this build flow.
 
 Use base **1.0.0** and a **separate 3.0.1 update NSP**. The builder selects the
 update profile from verified CNMT metadata. It rejects unknown code/data
-identities. Combined update images, cheats and DLC are not part of this flow.
+identities. Combined update images and cheats are not part of this flow. The three
+separate, pinned DLC packages can optionally be added as described below.
 
 On Apple silicon with macOS 26+, the command-line tools and Homebrew libraries
 `opus`, `libvpx`, `libvorbis`, and `libogg`, create the isolated environment once:
@@ -72,6 +73,44 @@ patches. It uses a separate version data folder and does not import old saves.
 The launcher keeps writable caches, verification proofs and game locks beside
 the app under `Animal Crossing Data`, preserving the signed app resources.
 No DMG or installation is performed by these commands.
+
+### Optional three DLCs for 3.0.1
+
+The optional DLC set contains **Pocket Camp Special Order Ticket** (`01006F800232712C`,
+index 300), **Nook Inc. Silk Rug** (`01006F800232712D`, index 301), and **Happy Home
+Paradise** (`01006F80023273E8`, index 1000), all version 0. Supply the owner's three
+separate NSPs; no game content is distributed with the source. The preparer checks
+their exact package hashes, AddOnContent CNMT type/version/application identity,
+FS headers and all six IVFC levels against `assets/expected-dlc-v0.json`.
+
+```sh
+build/acnh-3.0.1/work/venv/bin/python -B games/acnh/tools/prepare_dlc.py \
+  --source game-assets/animal-crossing-new-horizons/dlc/v0/acnh-dlc-pocket-camp-special-order-ticket-v0-01006f800232712c.nsp \
+  --source game-assets/animal-crossing-new-horizons/dlc/v0/acnh-dlc-nook-inc-silk-rug-v0-01006f800232712d.nsp \
+  --source game-assets/animal-crossing-new-horizons/dlc/v0/acnh-dlc-happy-home-paradise-v0-01006f80023273e8.nsp \
+  --keys game-assets/shared/keys/prod.keys --output build/acnh-3.0.1/work/dlc
+```
+
+Reuse this verified output on subsequent builds. Add `--dlc build/acnh-3.0.1/work/dlc`
+to the `build_host.py` command above, then repackage. The native work folder remembers
+the DLC path. Builds in a new work folder without this option report zero DLCs.
+The packager refuses a runtime built for a different DLC manifest and bundles all
+three read-only images. The runtime rechecks their full hashes, enumerates the actual
+DLC indices and serves file slices from each mounted image. The base/update RomFS
+and existing saves remain separate from the DLC images.
+
+To check the packaged runtime without launching gameplay:
+
+```sh
+ACNH_DLC_DIR="$PWD/build/acnh-3.0.1/Animal Crossing New Horizons.app/Contents/Resources/game/dlc" \
+  "build/acnh-3.0.1/Animal Crossing New Horizons.app/Contents/MacOS/acnh-native" \
+  "build/acnh-3.0.1/Animal Crossing New Horizons.app/Contents/Resources/game/rewritten" probe-dlc
+```
+
+This probe checks all 1,173 DLC file slices, guest-facing enumeration/mount/cache
+queries, size/read/EOF behavior, write rejection and traversal rejection. It does
+not establish that Happy Home Paradise or the promotional rewards work in gameplay;
+3.0.1 and its DLC support remain experimental.
 
 ### Optional 30 / 60 FPS selection for 3.0.1
 

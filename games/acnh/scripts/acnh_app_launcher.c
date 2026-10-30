@@ -93,6 +93,8 @@ int main(int argc, char **argv) {
     setenv("TOTK_PROFILE_DIR", profile, 1);
     setenv("TOTK_SHADER_CACHE", cache, 1);
     setenv("TOTK_ROMFS", romfs, 1);
+    char dlc[PATH_MAX]; join(dlc, game, "dlc");
+    setenv("ACNH_DLC_DIR", dlc, 1);
     setenv("TOTK_SHARED_FONTS", fonts, 1);
     setenv("TOTK_ROMFS_PROOF_DIR", data, 1);
     setenv("TOTK_GAME_SLOT_DIR", slot, 1);

@@ -22,6 +22,7 @@ REPO_ROOT = GAME.parents[1]
 WORKSPACE_ROOT = GAME.parents[2]
 sys.path.insert(0, str(REPO_ROOT))
 from games.acnh.prepare import prepared_profile
+from games.acnh.tools.prepare_dlc import verify_assets as verify_dlc_assets
 from games.acnh.tools.prepare_fps import verify_assets
 # The shader translator is carried in this folder (prebuilt/macos-arm64/README.md) and pinned by its .sha256.
 TRANSLATOR = GAME / "prebuilt/macos-arm64/totk_xlate"
@@ -114,6 +115,22 @@ def verify_inputs(work: Path, prepared: Path, fonts: Path):
     marker = ("MNG_ACNH_VERSION:" + expected["display_version"]).encode()
     if marker not in runtime_bytes:
         raise ValueError("Runtime was built for another ACNH version")
+    dlc_digest = host.get("dlc_manifest_sha256")
+    dlc_marker = ("MNG_ACNH_DLC:" + (dlc_digest or "none")).encode() + b"\0"
+    if dlc_marker not in runtime_bytes:
+        raise ValueError("Runtime DLC configuration differs from host inputs; rebuild the host")
+    if dlc_digest:
+        if expected["cnmt_version_raw"] != 2097152:
+            raise ValueError("DLC assets require ACNH 3.0.1")
+        dlc_dir = Path(host["dlc"])
+        manifest, _ = verify_dlc_assets(dlc_dir)
+        manifest_id = identity(dlc_dir / "manifest.json")
+        if manifest_id["sha256"] != dlc_digest:
+            raise ValueError("DLC manifest changed since the host build")
+        verified["dlc/manifest.json"] = manifest_id
+        for row in manifest["entries"]:
+            name = f'{row["title_id"]}.romfs'
+            verified[f"dlc/{name}"] = {"size": row["romfs_size"], "sha256": row["romfs_sha256"]}
     fps_sha = host.get("fps_manifest_sha256")
     if fps_sha:
         fps_dir = work / "build/fps60"
@@ -238,13 +255,13 @@ def seed_data(data_dir: Path, user_data_src: Path = None, cache_src: Path = None
 def package(work: Path, prepared: Path, fonts: Path, output: Path, icon: Path = None):
     if output.suffix != ".app":
         raise ValueError("--output must end with .app")
+    expected, verified, font_info = verify_inputs(work, prepared, fonts)
     if output.exists():
         print(f"Removing existing output bundle: {output}")
         shutil.rmtree(output)
     if not output.parent.is_dir():
         output.parent.mkdir(parents=True, exist_ok=True)
 
-    expected, verified, font_info = verify_inputs(work, prepared, fonts)
     output.mkdir()
 
     try:
@@ -283,6 +300,11 @@ def package(work: Path, prepared: Path, fonts: Path, output: Path, icon: Path = 
         # 4. Bundle RomFS
         clone(prepared / "update/romfs/romfs.bin", game / "romfs/romfs.bin")
         clone(prepared / "update/romfs/runtime-index.bin", game / "romfs/runtime-index.bin")
+        if "dlc/manifest.json" in verified:
+            dlc_dir = Path(json.loads((work / "host-info.json").read_text())["dlc"])
+            for name in verified:
+                if name.startswith("dlc/"):
+                    clone(dlc_dir / Path(name).name, game / name)
 
         # 5. Bundle shared fonts
         for font_name in font_info:
@@ -371,6 +393,8 @@ def package(work: Path, prepared: Path, fonts: Path, output: Path, icon: Path = 
             "packager": identity(Path(__file__)),
             "launcher_source": identity(launcher_src),
         }
+        if "dlc/manifest.json" in verified:
+            receipt["dlc"] = json.loads((game / "dlc/manifest.json").read_text())["entries"]
         (resources / "build-receipt.json").write_text(json.dumps(receipt, indent=2) + "\n")
 
         # 11. Codesign the bundle
