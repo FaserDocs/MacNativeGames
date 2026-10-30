@@ -308,18 +308,14 @@ class UpdateRuntime(unittest.TestCase):
     def test_record_commit(self):
         app, _, _ = self.app()
         import plistlib
-        with patch.object(build_app, 'source_commit', return_value='abc1234'), \
-             patch.object(build_app, 'source_revision', return_value='a' * 40):
+        with patch.object(build_app, 'source_commit', return_value='abc1234'):
             update_runtime.record_commit(app)
         info = plistlib.loads((app / 'Contents/Info.plist').read_bytes())
         self.assertEqual((info['MNGSourceCommit'], info['CFBundleExecutable']), ('abc1234', 'TOTK'))
-        self.assertEqual(info['MNGSourceRevision'], 'a' * 40)
-        with patch.object(build_app, 'source_commit', return_value=''), \
-             patch.object(build_app, 'source_revision', return_value=''):   # not a git checkout: no stale commit, no stale update base
+        with patch.object(build_app, 'source_commit', return_value=''):   # not a git checkout: no stale commit
             update_runtime.record_commit(app)
         info = plistlib.loads((app / 'Contents/Info.plist').read_bytes())
         self.assertNotIn('MNGSourceCommit', info)
-        self.assertNotIn('MNGSourceRevision', info)
 
     def test_restore_replaced_app(self):
         app = self.root / 'Game.app'

@@ -240,10 +240,8 @@ def probe_runtime(tmp, version, logs):
 
 
 def record_commit(tmp):
-    """The commits this runtime is built from, in the app's Info.plist: MNGSourceCommit (build_app.source_commit) for
-    the HUD, which would otherwise keep showing the commit of the app's first build, and MNGSourceRevision
-    (build_app.source_revision) for app/update_check.h, which would otherwise keep offering the update the app already
-    has, because the update notice compares GitHub main against the app's first build only."""
+    """The commit this runtime is built from, in the app's Info.plist: MNGSourceCommit (build_app.source_commit) for
+    the HUD, which would otherwise keep showing the commit of the app's first build."""
     path = tmp / 'Contents/Info.plist'
     info = plistlib.loads(path.read_bytes())
     commit = build_app.source_commit()
@@ -251,11 +249,6 @@ def record_commit(tmp):
         info['MNGSourceCommit'] = commit
     else:
         info.pop('MNGSourceCommit', None)
-    revision = build_app.source_revision()
-    if revision:
-        info['MNGSourceRevision'] = revision
-    else:
-        info.pop('MNGSourceRevision', None)
     path.write_bytes(plistlib.dumps(info))
 
 

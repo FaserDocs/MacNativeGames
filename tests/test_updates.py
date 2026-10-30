@@ -280,16 +280,13 @@ class Updates(unittest.TestCase):
                 (tree/f'build/shader-seed/{version}/seed-manifest.json').write_text(json.dumps(dict(
                     version=version, chain='totk-native-v8-unverified', shaders=8000,
                     files={'pso_manifest.tsv':hashlib.sha256(b'test').hexdigest()})))
-                revision = {'v112': 'a'*40, 'v121': 'invalid', 'v143': subprocess.CalledProcessError(128, 'git')}[version]
-                with patch.object(build_app.subprocess, 'check_output', side_effect=[revision]), \
-                     patch.object(build_app, 'app_seal_valid', return_value=True), patch.object(build_app, 'sign_app') as signing, \
+                with patch.object(build_app, 'app_seal_valid', return_value=True), patch.object(build_app, 'sign_app') as signing, \
                      patch.object(build_app, 'resolve_lists', side_effect=fake_lists):
                     build_app.step_app(tree,out,self.root/'logs',version=version)
                 signing.assert_called_once_with(out.with_name(out.name+'.partial'),self.root/'logs')
                 info=plistlib.loads((out/'Contents/Info.plist').read_bytes())
                 self.assertEqual(info['CFBundleShortVersionString'],display)
-                if version == 'v112': self.assertEqual(info['MNGSourceRevision'], 'a'*40)
-                else: self.assertNotIn('MNGSourceRevision', info)
+                self.assertNotIn('MNGSourceRevision', info)   # no update notice to compare it with GitHub
                 self.assertIn('zh-Hans',info['CFBundleLocalizations']);self.assertIn('zh-Hant',info['CFBundleLocalizations'])
                 self.assertEqual('pt-BR' in info['CFBundleLocalizations'],version=='v143')
                 res=out/'Contents/Resources/totk'
