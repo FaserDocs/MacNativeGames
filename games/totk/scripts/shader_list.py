@@ -363,6 +363,8 @@ class ShaderList:
                     names[name] = ''
                 elif any(r['variant'] == name[:-2] for r in mine):   # the seed carries it (its default, depth-bound or a listed one)
                     names[name] = name
+                elif same := next((r['variant'] for r in mine if r['variant'].endswith('-' + suffix)), None):
+                    names[name] = same + '_b'   # the same bind state of the shader translated for this one (prepare_shader_seed.py translation_input)
                 elif suffix == DEFAULT_SUFFIX:
                     names[name] = None
                 else:

@@ -967,6 +967,13 @@ def step_shaders(tree, logs, *, version='v0'):
          '--version', version, '--modules', tree/f'rewritten/{version}'], logs/'prepare-shader-seed.log', cwd=tree)
 
 
+def xcodes_on_volumes(volumes):
+    """Xcode*.app at the top of each volume or one folder down. Symlinks are skipped: 'Macintosh HD' links to /, where
+    one folder down is /home, an automount whose open can block forever."""
+    disks = [v for v in sorted(volumes.iterdir()) if not v.is_symlink()] if volumes.is_dir() else []
+    return [p for pattern in ('Xcode*.app', '*/Xcode*.app') for v in disks for p in sorted(v.glob(pattern))]
+
+
 def developer_dirs():
     """Developer folders that may hold the Metal toolchain: DEVELOPER_DIR, the one xcode-select points at, Xcode*.app in
     /Applications, then any Xcode Spotlight knows (one kept outside /Applications, for example next to the game)."""
@@ -978,8 +985,7 @@ def developer_dirs():
     found += [str(p / 'Contents/Developer') for p in sorted(Path('/Applications').glob('Xcode*.app'))]
     found += [str(p / 'Contents/Developer') for p in sorted(Path.home().glob('Applications/Xcode*.app'))]
     # An Xcode kept on another volume, at its top or one folder down (Spotlight may not index it)
-    found += [str(p / 'Contents/Developer') for p in sorted(Path('/Volumes').glob('*/Xcode*.app'))]
-    found += [str(p / 'Contents/Developer') for p in sorted(Path('/Volumes').glob('*/*/Xcode*.app'))]
+    found += [str(p / 'Contents/Developer') for p in xcodes_on_volumes(Path('/Volumes'))]
     try:
         spotlight = subprocess.check_output(['mdfind', "kMDItemCFBundleIdentifier == 'com.apple.dt.Xcode'"], text=True,
                                             stderr=subprocess.DEVNULL)

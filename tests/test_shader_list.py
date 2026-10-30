@@ -63,6 +63,23 @@ class ShaderList(unittest.TestCase):
             self.assertEqual(rows(root/'pso_manifest.tsv'), [f'R\t{key(default+"_b", f"{two}-{suffix(cube)}_b")}',
                                                             f'C\t{two}-{SUFFIX}_b'])
 
+    def test_resolve_names_a_shader_served_by_another_through_its_index(self):
+        sys.path.insert(0, str(SCRIPT.parent))
+        from prepare_shader_seed import SUFFIX
+        first, twin = 'a'*64, 'c'*64   # a translation cannot tell them apart (prepare_shader_seed.py translation_input)
+        def key(vs, fs):
+            return (vs.encode().ljust(80, b'\0')+fs.encode().ljust(80, b'\0')+b'\x07'*40).hex()
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            index = [{'variant': f'{first}-{SUFFIX}', 'deps': {}}]
+            seed = cache(root/'seed', {first: index, twin: index})
+            (seed/'shader-keys.json').write_text(json.dumps({'keys': [first, twin]}))
+            shared = root/'shader_list.tsv'
+            shared.write_text(f'R\t{key(twin+"-"+SUFFIX+"_b", twin+"-"+SUFFIX+"_b")}\tm\n'
+                              f'R\t{key(first+"-"+SUFFIX+"_b", first+"-"+SUFFIX+"_b")}\tm\n')
+            self.run_tool('resolve', seed, shared, root/'pso_manifest.tsv', root/'pso_title.tsv')
+            self.assertEqual(rows(root/'pso_manifest.tsv'), [f'R\t{key(first+"-"+SUFFIX+"_b", first+"-"+SUFFIX+"_b")}'])
+
     def test_the_list_keeps_the_bind_state_behind_every_name_and_refuses_rows_without_one(self):
         sys.path.insert(0, str(SCRIPT.parent))
         from prepare_shader_seed import SUFFIX, suffix, answers_for

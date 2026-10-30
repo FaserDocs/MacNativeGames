@@ -362,7 +362,9 @@ static BOOL contrib_wanted(NSString *shader, NSString *variant) {
     if (!g_seed_all_default) return YES;
     NSString *builtin = default_variant(shader);
     if ([variant isEqualToString:builtin]) return NO;
-    for (NSDictionary *v in variants_of(shader)) if ([v[@"variant"] isEqual:builtin]) return YES;
+    // by the default suffix: a shader another one's translations serve (prepare_shader_seed.py translation_input) names that one's
+    NSString *suffix = [builtin substringFromIndex:shader.length];
+    for (NSDictionary *v in variants_of(shader)) if ([v[@"variant"] isKindOfClass:NSString.class] && [v[@"variant"] hasSuffix:suffix]) return YES;
     return NO;
 }
 /* nvn_mtl.m pso_contribute: the name a pipeline row gives "<variant>_b" so that another player's build has that variant.
