@@ -131,6 +131,25 @@ void runtime_game_patches(Module *main_module) {
     if (step_floor_live) fprintf(stderr, "[alc] adaptive step floor armed (0.5 at a 60 fps pace, 1.0 at 30, 1.5 at 20)\n");
 }
 
+/* The TotK tree's settings panel and its picture controls: Astral Chain offers the MetalFX output upscale (key 3) and
+   the HUD, not TotK's aspect / output-mode / render-resolution modes, so those answer "not offered" here. The panel's
+   rows are built from what exists (the launcher's presets remain the place for resolution). */
+int runtime_render_res(unsigned *w, unsigned *h) { (void)w; (void)h; return 0; }
+int runtime_output_modes(void) { return 0; }
+int runtime_output_mode_set(int mode) { (void)mode; return 0; }
+int runtime_output_native(int mode, unsigned *w, unsigned *h) { (void)mode; (void)w; (void)h; return 0; }
+int runtime_aspect_set_ratio(float r) { (void)r; return 0; }
+float runtime_aspect_ratio(void) { return 0; }
+float runtime_aspect_start(void) { return 0; }
+void runtime_aspect_view(double w, double h) { (void)w; (void)h; }
+void runtime_audio_hold(int on) { (void)on; }
+void runtime_audio_output_restart(int recreate) { (void)recreate; }
+int runtime_phone_fps(void) { return 60; }
+void runtime_phone_fps_set(int fps) { (void)fps; }
+void runtime_motion_phone(int on) { (void)on; }
+void runtime_motion_mouse(int on) { (void)on; }
+void runtime_motion_feed_mouse(const double acc_g[3], const double gyro_rad_s[3], uint64_t now_ns) { (void)acc_g; (void)gyro_rad_s; (void)now_ns; }
+
 /* The TotK host hooks the shared graphics layer and the input keys call keep their names and answer "off". */
 void runtime_frame_step_pin(double ms) { (void)ms; }
 void runtime_frame_step_update(uint64_t now_ns) { (void)now_ns; }

@@ -138,12 +138,16 @@ static NSString *shortcut_text(void){
  [self refresh];__weak TOTKShortcutHelp *weak=self;self.timer=[NSTimer scheduledTimerWithTimeInterval:0.5 repeats:YES block:^(NSTimer *t){(void)t;[weak refresh];}];}return self;}
 -(void)refresh{
  if(!hud_compact()){self.label.stringValue=shortcut_text();return;}
+ int hudMode=fps_overlay_hud_mode();
+ if(hudMode==HUD_MODE_OFF){if(self.label.stringValue.length){self.label.stringValue=@"";}self.hidden=YES;return;}
+ if(self.hidden)self.hidden=NO;
  NSFont *mono=[NSFont monospacedSystemFontOfSize:10.5 weight:NSFontWeightMedium],*small=[NSFont systemFontOfSize:10];
  NSColor *green=[NSColor colorWithCalibratedRed:80/255.0 green:1 blue:120/255.0 alpha:1],*yellow=[NSColor colorWithCalibratedRed:1 green:230/255.0 blue:40/255.0 alpha:1];
  NSMutableAttributedString *a=[NSMutableAttributedString new];
- for(int i=0;i<3;i++){char t[128];int hl=0;if(!hud_snapshot(i,t,sizeof t,&hl))continue;
+ int lines=fps_overlay_full_hud()?4:1;   // all: FPS, shaders, render pipelines, load; FPS only: the first
+ for(int i=0;i<lines;i++){char t[128];int hl=0;if(!hud_snapshot(i,t,sizeof t,&hl))continue;
   [a appendAttributedString:[[NSAttributedString alloc] initWithString:[([NSString stringWithUTF8String:t] ?: @"") stringByAppendingString:@"\n"] attributes:@{NSFontAttributeName:mono,NSForegroundColorAttributeName:hl?yellow:green}]];}
- if(a.length){NSMutableParagraphStyle *gap=[NSMutableParagraphStyle new];gap.paragraphSpacingBefore=4;
+ if(a.length&&fps_overlay_full_hud()){NSMutableParagraphStyle *gap=[NSMutableParagraphStyle new];gap.paragraphSpacingBefore=4;
   [a appendAttributedString:[[NSAttributedString alloc] initWithString:shortcut_text() attributes:@{NSFontAttributeName:small,NSForegroundColorAttributeName:[NSColor colorWithCalibratedWhite:0.75 alpha:1],NSParagraphStyleAttributeName:gap}]];}
  else [a appendAttributedString:[[NSAttributedString alloc] initWithString:shortcut_text() attributes:@{NSFontAttributeName:small,NSForegroundColorAttributeName:[NSColor colorWithCalibratedWhite:0.75 alpha:1]}]];
  if([a isEqualToAttributedString:self.label.attributedStringValue])return;
@@ -156,6 +160,14 @@ static NSString *shortcut_text(void){
  else{CGFloat w=MIN(560,MAX(280,self.superview.bounds.size.width-40)),h=168;f=NSMakeRect(floor((self.superview.bounds.size.width-w)/2),floor((self.superview.bounds.size.height-h)/2),w,h);in=NSInsetRect(NSMakeRect(0,0,w,h),20,18);}
  if(!NSEqualRects(self.frame,f))self.frame=f;self.label.frame=in;}
 @end
+/* Key 1 (SYSTEM key 1 / the settings key): no in-game panel in this port yet, so it cycles the HUD the way TotK's panel
+   row does — all lines -> FPS only -> nothing -> all. The launcher holds the presets (resolution, MetalFX, frame rate). */
+void runtime_settings_toggle(void){
+    static int mode = 1;   // HUD_MODE_ALL
+    mode = mode == 1 ? 2 : mode == 2 ? 0 : 1;
+    fps_overlay_set_hud_mode(mode);
+    fprintf(stderr, "[alc] HUD %s\n", mode == 1 ? "all" : mode == 2 ? "FPS only" : "off");
+}
 void runtime_shortcut_help_toggle(void){
     /* Key 1 cycles the HUD: all -> minimal (FPS only) -> off -> all (the settings panel will take over, see TotK). */
     static int mode = 1;   // HUD_MODE_ALL

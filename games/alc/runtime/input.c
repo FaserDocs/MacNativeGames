@@ -142,9 +142,6 @@ static void zero_drift_mode(const void *handle,const int *mode){(void)handle;(vo
 static void joy_dual(const uint32_t *id){(void)id;}
 static uint32_t show_controller_support_v1(const void *arg){return show_controller_support(NULL,arg);}
 #endif
-void *runtime_input_override(const char *name){
- void *feedback=runtime_hid_feedback_override(name);if(feedback)return feedback;
- static const struct{const char *name;void *fn;} entries[]={
 /* Astral Chain reads one state at a time (GetNpadState) and has a touch screen (no touches here: the Mac has none). */
 static void full_state(NpadState *out,const uint32_t *id){full_states(out,1,id);}
 static void handheld_state(NpadState *out,const uint32_t *id){handheld_states(out,1,id);}
@@ -156,6 +153,9 @@ static void initialize_touch(void){}
 static void touch_states_1(uint8_t *out){if(!out)runtime_fail("touch output pointer");pthread_mutex_lock(&inputLock);memset(out,0,16+1*0x28);int64_t n=++sample;memcpy(out,&n,8);pthread_mutex_unlock(&inputLock);}
 static void touch_states_16(uint8_t *out){if(!out)runtime_fail("touch output pointer");pthread_mutex_lock(&inputLock);memset(out,0,16+16*0x28);int64_t n=++sample;memcpy(out,&n,8);pthread_mutex_unlock(&inputLock);}
 static uint32_t show_controller_support_arg(const void *arg){return show_controller_support(NULL,arg);}
+void *runtime_input_override(const char *name){
+ void *feedback=runtime_hid_feedback_override(name);if(feedback)return feedback;
+ static const struct{const char *name;void *fn;} entries[]={
  {"_ZN2nn3hid14InitializeNpadEv",initialize},{"_ZN2nn3hid22SetSupportedNpadIdTypeEPKjm",supported_ids},{"_ZN2nn3hid24SetSupportedNpadStyleSetENS_4util10BitFlagSetILi32ENS0_12NpadStyleTagEEE",supported_styles},
  {"_ZN2nn3hid15GetNpadStyleSetERKj",style},{"_ZN2nn3hid13GetNpadStatesEPNS0_16NpadFullKeyStateEiRKj",full_states},
  {"_ZN2nn3hid13GetNpadStatesEPNS0_16NpadJoyDualStateEiRKj",disconnected_states},{"_ZN2nn3hid13GetNpadStatesEPNS0_16NpadJoyLeftStateEiRKj",disconnected_states},
@@ -169,7 +169,7 @@ static uint32_t show_controller_support_arg(const void *arg){return show_control
  {"_ZN2nn3hid12GetNpadStateEPNS0_17NpadJoyRightStateERKj",disconnected_state},{"_ZN2nn3hid13GetMouseStateEPNS0_10MouseStateE",mouse_state},
  {"_ZN2nn3hid29SetNpadHandheldActivationModeENS0_26NpadHandheldActivationModeE",handheld_activation},{"_ZN2nn3hid21InitializeTouchScreenEv",initialize_touch},
  {"_ZN2nn3hid19GetTouchScreenStateILm1EEEvPNS0_16TouchScreenStateIXT_EEE",touch_states_1},{"_ZN2nn3hid19GetTouchScreenStateILm16EEEvPNS0_16TouchScreenStateIXT_EEE",touch_states_16},
- {"_ZN2nn3hid21ShowControllerSupportERKNS0_20ControllerSupportArgE",show_controller_support_arg}}
+ {"_ZN2nn3hid21ShowControllerSupportERKNS0_20ControllerSupportArgE",show_controller_support_arg}
 #ifdef GAME_BOTW
  ,{"_ZN2nn3hid28InitializeSevenSixAxisSensorEPvm",seven_axis_init},{"_ZN2nn3hid26FinalizeSevenSixAxisSensorEv",seven_axis_ok},
  {"_ZN2nn3hid23StartSevenSixAxisSensorEv",seven_axis_ok},{"_ZN2nn3hid22StopSevenSixAxisSensorEv",seven_axis_ok},
