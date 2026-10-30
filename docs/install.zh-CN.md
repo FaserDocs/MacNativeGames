@@ -194,6 +194,11 @@ python3.14 games/totk/ios/tools/install_device.py "<文件夹>/TOTK-Vision.app" 
 - **本仓库有新版本**（`git pull` 之后）：
   - 先退出游戏，再运行 `python3.14 update_runtime.py "<App 路径>"`，约一分钟更新完，不需要游戏文件和密钥。
   - 它提示启动着色器不再匹配时，加上 `--seed`。
+- **退回更新前的版本**（新版本玩起来有问题时）：
+  - 先退出游戏，用 `git reflog` 找到 `git pull` 之前所在的提交（`pull` 那一行下面的一行）。
+  - 运行 `git checkout <那个提交>`（git 会提示 "detached HEAD"，这是正常的），再运行一次 `python3.14 update_runtime.py "<App 路径>"`；它要求时加上 `--seed`。
+  - 然后运行 `git checkout main`。App 会一直用这个旧的运行时，直到你下次更新。
+  - 只能退回到 685f940（2026-10-26）及以后的提交；存档和设置不会改动。
 - **换游戏版本**：
   - 换上新的 `--update`，用同一个 `-o` 再跑一次 `build_app.py`，会替换掉原来的 App。
   - 新版本第一次启动前，App 会把存档完整备份到旁边的 `profile-before-<版本>`。以后可能要回到旧版本的话，留着这份备份。
