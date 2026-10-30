@@ -290,6 +290,7 @@ class BuildTests(unittest.TestCase):
         variable, kind, values, default, shown, section = rows[0][:6]
         self.assertEqual((kind, default, shown, section), ('choice', 'shared', 'platform:mac', 'Controls'))
         self.assertEqual([v.split('=', 1)[0] for v in values.split(',')], ['shared', 'own'])
+        self.assertIn('level=basic', rows[0][8:])   # among the basic settings: the Mac window folds the others under Advanced settings
         self.assertIn('!strcmp(e, "own")', (GAME / 'runtime/host/front_mac.m').read_text())   # the front end's own value for the keyboard as a player of its own
 
     def test_build_environment_disables_nuget_audit(self):
