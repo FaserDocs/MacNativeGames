@@ -162,6 +162,8 @@ It is ported here as it is, in place of this target's own fix. `third_party/COPI
 
 Both runs printed the one known `[RED] texture ID … not registered` line and no other.
 
+**The built app.** The app was then built from this branch (`d15347f`): only the shader split ran again, and all 29,651 Mac shaders came from the cache. It is 13.1 GB, `codesign --verify --deep --strict` passed, its `launcher.json` holds the Keyboard row, and it was installed in `/Applications` (the previous app moved to the Trash). The same two headless runs on the installed app gave the same results. In 1P, the applet was called twice (`1 to 1 players wanted`), and the game went on to the kart parts. In 2P, it was called once (`canceled`), and the game went back to the engine class menu and then, with B twice, to the main menu.
+
 Not checked: two players by hand (the keyboard and a DualSense with Keyboard set to Own player), the new row drawn in the settings window, how the single-player modes treat a controller that is player 2, and this game's keyboard, Mii and error applets.
 
 ## Known limitations
