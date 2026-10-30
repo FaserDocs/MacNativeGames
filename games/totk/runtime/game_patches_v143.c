@@ -457,15 +457,13 @@ int runtime_output_res(unsigned *w,unsigned *h){
         }else if(e&&!strcmp(e,"0"))on=0;
         else if(!e||!*e||!strcmp(e,"auto")){
             /* The largest canvas whose heap overlay the app carries (romfs.c loads <canvas>-scene-<canvas>, the scene
-               following the canvas): 2K. The start stays 1080p; only the swapchain and the heaps are sized for 2K.
-               Not 4K (2026-10-25, user "添加 4k 支持"): its heaps make the game create one 1490 MiB memory pool at the
-               start, which the graphics layer's 1 GiB zero-copy limit refuses (nvn_mtl.m POOL_BUFFER_MAX, set after two
-               macOS kernel panics in IOGPUFamily); the game stopped at once. 4K needs that pool split first.
-               Native 4K (build_app.py --native-4k) therefore keeps the game's own scene on the 4K canvas (3200x1800,
-               render_res_publish): its heaps are sized for the largest canvas-sized scene, the 2K one, so a 4K app
-               carries 3840x2160-scene-2560x1440 (+810 MiB) and starts under the limit. */
+               following the canvas): 4K when the build made it (build_app.py native 4K: on by default on a Mac with
+               16 GB or more, user 2026-10-30), else 2K. The start stays 1080p; only the swapchain and the heaps are
+               sized for the largest. A 4K scene's heaps make the game create one 1,490 MiB memory pool at the start
+               (+1,380 MiB for the application pool), which the graphics layer takes since it has no size limit on a
+               pool's zero-copy buffer (nvn_mtl.m pool_range_check, 2026-10-30). */
             const char *dir=getenv("TOTK_ROMFS_PATCHES_OUT");char path[4096];
-            static const unsigned sizes[][4]={{3840,2160,2560,1440},{2560,1440,2560,1440}};   /* canvas, scene */
+            static const unsigned sizes[][4]={{3840,2160,3840,2160},{2560,1440,2560,1440}};   /* canvas, scene */
             for(unsigned i=0;i<sizeof sizes/sizeof *sizes&&!on;i++){
                 snprintf(path,sizeof path,"%s/%ux%u-scene-%ux%u/manifest.tsv",dir?dir:"extracted/v143/romfs-patches-out",sizes[i][0],sizes[i][1],sizes[i][2],sizes[i][3]);
                 FILE *f=fopen(path,"r");if(f){fclose(f);on=1;cw=sizes[i][0];ch=sizes[i][1];}
@@ -603,9 +601,6 @@ static void render_res_publish(unsigned canvas_w){
     if(!render_page)return;
     float k=canvas_w/1920.0f,v[2]={render_w/k,render_h/k};
     if(render_canvas){v[0]=1920;v[1]=1080;render_w=(unsigned)(1920*k);render_h=(unsigned)(1080*k);}   /* the game's scaling makes it the canvas */
-    /* Native 4K: a 3840x2160 scene's pool (about 1.49 GiB) is over the 1 GiB zero-copy limit, so the 4K canvas keeps the
-       game's own docked scene, 1600x900 scaled with the canvas: 3200x1800. Smaller canvases render it at the canvas size. */
-    if(render_canvas&&canvas_w>2560){v[0]=1600;v[1]=900;render_w=(unsigned)(1600*k);render_h=(unsigned)(900*k);}
     memcpy(render_page+16,v,sizeof v);
     fprintf(stderr,"[totk] 1.4.3 render resolution: %ux%u on a %u-wide canvas (game size %.0fx%.0f, scaled by %.4f)\n",render_w,render_h,canvas_w,v[0],v[1],k);
 }
@@ -625,7 +620,6 @@ static int render_res(unsigned *w,unsigned *h){
         *w=960;*h=540;
 #else
         render_canvas=1;unsigned ow,oh;if(runtime_output_res(&ow,&oh)){*w=ow;*h=oh;}else{*w=1920;*h=1080;}   /* the largest scene, for the heaps */
-        if(*w>2560){*w=2560;*h=1440;}   /* native 4K: the 2K canvas has the largest canvas-sized scene (render_res_publish) */
 #endif
         return 1;
     }
@@ -707,7 +701,7 @@ static void output_size_set(uint64_t want){
    the swapchain's size (2K); with MetalFX the output stage then scales the 2K canvas up to the window (a 4K screen). */
 int runtime_output_native(int mode,unsigned *w,unsigned *h){
     if(!output_page)return 0;
-    if(mode==OUTPUT_MODE_NATIVE_4K){if(output_w<3840||output_h<2160)return 0;*w=3840;*h=2160;return 1;}   /* --native-4k */
+    if(mode==OUTPUT_MODE_NATIVE_4K){if(output_w<3840||output_h<2160)return 0;*w=3840;*h=2160;return 1;}   /* a native 4K app */
     if(mode!=OUTPUT_MODE_NATIVE&&mode!=OUTPUT_MODE_NATIVE_METALFX)return 0;
     if(output_w>2560){*w=2560;*h=1440;return 1;}   /* a 4K app's 2K stays 2560x1440 */
     *w=output_w;*h=output_h;return 1;
@@ -734,7 +728,7 @@ int runtime_output_mode_set(int mode){
     output_size_set(pack_size(w,h));
     int mfx=mode==OUTPUT_MODE_METALFX||mode==OUTPUT_MODE_NATIVE_METALFX;
     dm_gfx_set_flag("mfx_output",mfx);dm_gfx_set_flag("mfx_upscale",mfx);
-    fprintf(stderr,"[totk] picture: %s\n",mode==OUTPUT_MODE_NATIVE_4K?"native 4K (3200x1800 scene)":mode==OUTPUT_MODE_720P?"720p":mode==OUTPUT_MODE_NATIVE_METALFX?"native 2K, MetalFX to the window":
+    fprintf(stderr,"[totk] picture: %s\n",mode==OUTPUT_MODE_NATIVE_4K?"native 4K":mode==OUTPUT_MODE_720P?"720p":mode==OUTPUT_MODE_NATIVE_METALFX?"native 2K, MetalFX to the window":
             mode==OUTPUT_MODE_NATIVE?"native":mode==OUTPUT_MODE_METALFX?"MetalFX 2K":"off (1080p)");
     picture_mode_save(atomic_load((_Atomic uint64_t *)(void *)(output_page+32)));
     return 1;
