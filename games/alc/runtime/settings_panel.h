@@ -272,11 +272,14 @@ static NSArray<TOTKSettingRow *> *settings_rows(void) {
    [NSString stringWithFormat:@(TOTK_UI("原生 %u×%u","Native %u×%u")),nw,nh]];
   [resModes addObject:@(m)];}
  NSString *resolution=settings_text("分辨率","Resolution");
+ /* This port's internal resolution is an exefs patch the launcher chooses (res-1920x1080 and friends), and there is no
+    aspect patch: the two rows are left out rather than shown as dead options. */
+ if(modes){
  if(res.count<2)[rows addObject:settings_fixed(resolution,@"1080p")];
  else [rows addObject:settings_row(resolution,res,resModes,
-  ^int{return runtime_output_mode();},^(int v){settingsPendingOutput=-1;if(runtime_output_mode_set(v)){settings_window_for(v);settings_save_int("graphics-output.txt",v,"resolution");}})];
+  ^int{return runtime_output_mode();},^(int v){settingsPendingOutput=-1;if(runtime_output_mode_set(v)){settings_window_for(v);settings_save_int("graphics-output.txt",v,"resolution");}})]; }
  NSString *aspect=settings_text("画面比例","Aspect ratio");
- if(!(runtime_aspect_ratio()>0))[rows addObject:settings_fixed(aspect,@"16:9")];
+ if(!(runtime_aspect_ratio()>0)){/* no aspect patch here: no row */}
  else{NSMutableArray<NSNumber *> *ratios=[@[@(16.0/9),@(16.0/10),@(21.0/9),@(32.0/9)] mutableCopy];
   float start=runtime_aspect_start();BOOL listed=NO;   /* TOTK_ASPECT's ratio (2.39, 3440x1440 ...) as one more choice */
   for(NSNumber *r in ratios)listed|=aspect_near(start,r.doubleValue);
@@ -714,8 +717,11 @@ enum { SETTINGS_W = 600, SETTINGS_ROW_H = 34, SETTINGS_GAP = 6, SETTINGS_TOP = 9
   if(!pad&&a->action==SETTINGS_BIND_PANEL)continue;   /* key 1, fixed */
   if(pad&&input>CONTROLLER_SWITCH_BUTTONS&&a->action==SETTINGS_BIND_PANEL)continue;   /* not a mouse button */
   if(a->action<0){[menu addItem:[NSMenuItem sectionHeaderWithTitle:@(TOTK_UI(a->zh,a->en))]];continue;}
-  NSMenuItem *item=[[NSMenuItem alloc] initWithTitle:@(TOTK_UI(a->zh,a->en)) action:@selector(menuPicked:) keyEquivalent:@""];
-  item.target=self;item.tag=a->action;item.representedObject=@[@(input),@(pad)];item.state=a->action==now?NSControlStateValueOn:NSControlStateValueOff;[menu addItem:item];
+  /* Each row is prefixed with the Switch button the action stands for, the same notation the key caps use. */
+  { NSString *glyph=diagram_switch_label(a->action);
+    NSString *title=glyph.length?[NSString stringWithFormat:@"%@   %@",glyph,@(TOTK_UI(a->zh,a->en))]:@(TOTK_UI(a->zh,a->en));
+  NSMenuItem *item=[[NSMenuItem alloc] initWithTitle:title action:@selector(menuPicked:) keyEquivalent:@""];
+  item.target=self;item.tag=a->action;item.representedObject=@[@(input),@(pad)];item.state=a->action==now?NSControlStateValueOn:NSControlStateValueOff;[menu addItem:item]; }
  }
  [menu addItem:[NSMenuItem separatorItem]];
  NSMenuItem *none=[[NSMenuItem alloc] initWithTitle:settings_text("无（不使用）","None (unused)") action:@selector(menuPicked:) keyEquivalent:@""];

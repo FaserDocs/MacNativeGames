@@ -62,6 +62,38 @@ static NSString *diagram_action_short(int action) {
  }
  return @"";
 }
+/* The Switch button this action stands for, in the console's notation: the keyboard page labels each key with the
+   controller button it drives (A B X Y, L R ZL ZR, + -, the d-pad, the sticks), which reads the way the game's own
+   screens do; the action's name stays in the click menu and the list. */
+static NSString *diagram_switch_label(int action) {
+ switch(action){
+  case KEYMAP_A:return @"A";
+  case KEYMAP_B:return @"B";
+  case KEYMAP_X:return @"X";
+  case KEYMAP_Y:return @"Y";
+  case KEYMAP_L:return @"L";
+  case KEYMAP_R:return @"R";
+  case KEYMAP_ZL:return @"ZL";
+  case KEYMAP_ZR:return @"ZR";
+  case KEYMAP_PLUS:return @"+";
+  case KEYMAP_MINUS:return @"\u2212";
+  case KEYMAP_DLEFT:return @"\u2190";
+  case KEYMAP_DUP:return @"\u2191";
+  case KEYMAP_DRIGHT:return @"\u2192";
+  case KEYMAP_DDOWN:return @"\u2193";
+  case KEYMAP_LSTICK:return @"LS";
+  case KEYMAP_RSTICK:return @"RS";
+  case KEYMAP_MOVE_UP:return @"LS \u2191";
+  case KEYMAP_MOVE_DOWN:return @"LS \u2193";
+  case KEYMAP_MOVE_LEFT:return @"LS \u2190";
+  case KEYMAP_MOVE_RIGHT:return @"LS \u2192";
+  case KEYMAP_CAMERA_UP:return @"RS \u2191";
+  case KEYMAP_CAMERA_DOWN:return @"RS \u2193";
+  case KEYMAP_CAMERA_LEFT:return @"RS \u2190";
+  case KEYMAP_CAMERA_RIGHT:return @"RS \u2192";
+ }
+ return @"";
+}
 /* The action's full name, as the list and the menus write it (settings_actions). */
 static NSString *diagram_action_name(int action) {
  int count;const SettingsAction *all=settings_actions(&count);
@@ -217,12 +249,14 @@ enum { DIAGRAM_MOUSE_W = 92, DIAGRAM_MOUSE_H = 150, DIAGRAM_MOUSE_SPLIT = 58 };
  if(r.size.height<DIAGRAM_HALF_H){   /* the half-height arrows: the key and its action side by side on one line */
   NSRect at=diagram_half_action_rect(r);
   diagram_text(name,NSMakeRect(r.origin.x+4,r.origin.y+2,DIAGRAM_HALF_NAME_W,r.size.height-4),size,NSFontWeightSemibold,labelColor,NSTextAlignmentLeft);
-  diagram_text(diagram_half_action(m,k),at,halfSize,NSFontWeightBold,c,NSTextAlignmentCenter);
+  diagram_text(diagram_switch_label(a).length?diagram_switch_label(a):diagram_half_action(m,k),at,halfSize,NSFontWeightBold,c,NSTextAlignmentCenter);
   return;
  }
  diagram_text(name,NSMakeRect(r.origin.x+5,r.origin.y+3,r.size.width-10,12),size,NSFontWeightSemibold,labelColor,NSTextAlignmentLeft);
- diagram_text(settings?settings_text("设置","Settings"):diagram_action_short(a),NSMakeRect(r.origin.x+3,r.origin.y+14,r.size.width-6,r.size.height-17),
-  8.6,NSFontWeightBold,c,NSTextAlignmentCenter);
+ { NSString *glyph=settings?settings_text("设置","Settings"):diagram_switch_label(a);
+   if(!glyph.length)glyph=diagram_action_short(a);   /* a key with no button behind it keeps the action's name */
+   diagram_text(glyph,NSMakeRect(r.origin.x+3,r.origin.y+14,r.size.width-6,r.size.height-17),
+     8.6,NSFontWeightBold,c,NSTextAlignmentCenter); }
 }
 -(void)drawRect:(NSRect)dirty{
  (void)dirty;KeyMap m;runtime_keymap_get(&m);

@@ -734,3 +734,15 @@ controller page the same by position. With the panel closed, real keyboard event
 2 and 3: `mfx_interp = 1: 30+30` and `key 3: MetalFX output upscale off` in the log. The Display and Input tabs could
 not be clicked from the automation used here (synthetic clicks do not reach the custom view) — they need a hand click,
 but their rows are built from the code above.
+
+### 2026-10-30: the panel speaks in Switch buttons, and its dead rows are gone
+
+- **Key caps and the action menu use the console's notation.** The keyboard page used to label each key with the game
+  action it drives ("确认", "跳跃"); the player asked for the controller's own notation, so every key cap now shows the
+  Switch button behind it — A B X Y, L R ZL ZR, + −, the d-pad arrows, LS / RS (with arrows for the stick directions) —
+  and the action menu that opens on a click prefixes each row with that button ("A   确认 / 互动", "ZL   锁定 / 举盾", …).
+  The action names stay where they read best: the menu rows, the list view and the "nothing drives them" line.
+- **Dead rows removed from the Display page.** Resolution and aspect ratio were shown greyed with fixed values (this
+  port's internal resolution is an exefs patch the launcher picks, and there is no aspect patch); they are left out now,
+  so the page holds only rows that do something: Overlay, Frame lock, Frame interpolation. (The frame lock is real since
+  this port: `nvn_fps_lock_set` paces at exactly the chosen rate and the adaptive logic-step floor follows it.)
