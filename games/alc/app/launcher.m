@@ -44,6 +44,11 @@ static BOOL have_patch(NSString *slug) {
     return [NSFileManager.defaultManager fileExistsAtPath:[work_folder() stringByAppendingFormat:@"/patches/%@.tsv", slug]];
 }
 static NSString *fixed900_patch(void) { return have_patch(@"res-1600x900") ? @"res-1600x900" : have_patch(@"force-scaling-900p-v3") ? @"force-scaling-900p-v3" : nil; }
+/* The internal-resolution patches: the game renders at its own dynamic size up to 900p unless one of these is applied. */
+static NSString *res_patch_for(int fixed900) {
+    if (fixed900 == 2 && have_patch(@"res-1920x1080")) return @"res-1920x1080";
+    return fixed900 ? fixed900_patch() : nil;
+}
 /* RomFS mods: <work>/../mods/<name>/romfs with a manifest.tsv (make mods). */
 static NSString *mods_folder(void) { return [[work_folder() stringByDeletingLastPathComponent] stringByAppendingPathComponent:@"mods"]; }
 static NSArray<NSString *> *romfs_mods(void) {
@@ -77,7 +82,7 @@ static NSString *screen_name(NSScreen *s) { return s.localizedName ?: @"?"; }
     [self.preset addItemWithTitle:T("Personalizado", "Custom")];
     self.preset.target = self; self.preset.action = @selector(presetChanged:);
     self.fps = [self segments:@[@"30", @"60", T("120 (experimental)", "120 (experimental)")]];
-    self.internal = [self popup:@[T("Dinámica (la del juego, hasta 900p)", "Dynamic (the game's own, up to 900p)"), T("900p fija", "Fixed 900p")]];
+    self.internal = [self popup:@[T("Dinámica (la del juego, hasta 900p)", "Dynamic (the game's own, up to 900p)"), T("900p fija", "Fixed 900p"), T("1080p fija (más nítida)", "Fixed 1080p (sharper)")]];
     self.monitor = [NSPopUpButton new]; self.monitor.target = self; self.monitor.action = @selector(monitorChanged:);
     for (NSScreen *s in NSScreen.screens) {
         NSSize px = screen_pixels(s);
@@ -153,7 +158,7 @@ static NSString *screen_name(NSScreen *s) { return s.localizedName ?: @"?"; }
 }
 - (void)load:(NSUserDefaults *)d {
     int fps = (int)[d integerForKey:@"fps"]; self.fps.selectedSegment = fps == 120 ? 2 : fps == 30 ? 0 : 1;
-    [self.internal selectItemAtIndex:[d boolForKey:@"fixed900"]]; self.display.selectedSegment = [d boolForKey:@"fullscreen"];
+    { NSInteger ir = [d integerForKey:@"fixed900"]; [self.internal selectItemAtIndex:ir >= 0 && ir <= 2 ? ir : 0]; } self.display.selectedSegment = [d boolForKey:@"fullscreen"];
     NSInteger s = [d objectForKey:@"size"] ? [d integerForKey:@"size"] : 2; [self.size selectItemAtIndex:s >= 0 && s < 4 ? s : 2];
     self.scaler.selectedSegment = [d objectForKey:@"metalfx"] && ![d boolForKey:@"metalfx"] ? 1 : 0;
     { NSInteger ip = [d integerForKey:@"interp"]; self.interp.selectedSegment = ip >= 0 && ip <= 3 ? ip : 0; }
@@ -202,7 +207,7 @@ static NSString *screen_name(NSScreen *s) { return s.localizedName ?: @"?"; }
 - (void)save {
     NSUserDefaults *d = NSUserDefaults.standardUserDefaults;
     [d setInteger:self.preset.indexOfSelectedItem forKey:@"preset"];
-    [d setInteger:fps_values[self.fps.selectedSegment] forKey:@"fps"]; [d setBool:self.internal.indexOfSelectedItem == 1 forKey:@"fixed900"];
+    [d setInteger:fps_values[self.fps.selectedSegment] forKey:@"fps"]; [d setInteger:self.internal.indexOfSelectedItem forKey:@"fixed900"];
     [d setBool:self.display.selectedSegment == 1 forKey:@"fullscreen"]; [d setInteger:self.size.indexOfSelectedItem forKey:@"size"];
     [d setInteger:self.output.selectedItem.tag forKey:@"output"]; [d setBool:self.scaler.selectedSegment == 0 forKey:@"metalfx"];
     [d setInteger:self.interp.indexOfSelectedItem forKey:@"interp"];
@@ -239,7 +244,7 @@ int main(int argc, char **argv) {
 
         int fps = (int)[d integerForKey:@"fps"]; NSMutableArray *patches = [NSMutableArray array];
         if (fps >= 60 && have_patch(@"60fps")) [patches addObject:@"60fps"];
-        if ([d boolForKey:@"fixed900"] && fixed900_patch()) [patches addObject:fixed900_patch()];
+        { NSString *rp = res_patch_for((int)[d integerForKey:@"fixed900"]); if (rp) [patches addObject:rp]; }
         if ([d boolForKey:@"lod"] && have_patch(@"improved-lod-v2")) [patches addObject:@"improved-lod-v2"];
         if ([d boolForKey:@"nograin"] && have_patch(@"remove-film-grain")) [patches addObject:@"remove-film-grain"];
         setenv("ALC_PATCHES", [patches componentsJoinedByString:@","].UTF8String, 1);

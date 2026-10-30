@@ -579,3 +579,25 @@ draw.
 so a player cannot land in the washed mode by picking a preset. The 60 FPS patch, MetalFX output upscale and key 3's
 master-switch fix (the key used to flip only the output stage while the scaler's master switch stayed closed — that is
 why it "did nothing") are unaffected and remain on.
+
+### 2026-10-30: internal resolution 1920x1080 (the game's own size config, nine sites)
+
+Astral Chain renders at a dynamic size up to 1600x900 (docked) / 1280x720 (handheld). The docked pair comes from two
+copies of the same chooser — `mov w9, #0x640` / `mov w9, #0x384` beside a `csel` against the handheld pair — plus the
+display-size getter at main+0x4328c0 and three `cmp w0, #0x640` tests that decide "docked" by comparing the width.
+scripts/make_res_patch.py (rewritten for this game; the by3 copy it replaced pointed at BY3_build/v120 and could not
+run here) finds and patches all nine to 1920x1080, verifying each original word and decoding each replacement back
+before writing mods/1.0.1/res-1920x1080/. The handheld pair and the dynamic-resolution arithmetic are untouched, so
+the game's own levels still scale from the 1080p base.
+
+**Verified**: with `ALC_PATCHES=60fps,res-1920x1080` the NVN swapchain is created at **1920x1080** (it was 1600x900),
+the MetalFX output upscale runs 1920x1080 -> 3010x1686 at 0.74 ms/frame (1200/1200 frames), gameplay frame time stays
+p50 16.67 / p95 16.94 / p99 17.05 ms at 60 fps with the game's own GPU work at p50 2.9 ms (about 1.5 ms at 900p —
+still an eighth of the 16.7 ms budget), zero GPU errors and zero drops. A gameplay capture at 1080p shows the sharper
+picture; note that edge-energy comparisons across two different scenes are not meaningful and were not used.
+
+The launcher's Internal resolution control gains "Fixed 1080p" (setting 2), which selects res-1920x1080 when the
+patch table is present; "Fixed 900p" still maps to res-1600x900 / force-scaling-900p-v3 when those exist. Run it with
+`make patches` once to generate the table (14 rows of 60fps + 9 rows of res-1920x1080).
+
+Not done here: no per-scene soak at 1080p yet, and the frame-interpolation HDR issue above is unchanged by this.
