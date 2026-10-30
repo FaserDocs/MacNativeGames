@@ -770,3 +770,26 @@ game:
 1062 files and presented its first frame at **0.305 s** — the same cold start without a seed took 25.99 s when this work
 folder was rebuilt that morning; on this machine's already-warm cache the import is a no-op (0 files, the seed was made
 from it) and the boot is unchanged. The launcher's data folder resolves to the same path as before (GAME_FOLDER "ALC").
+
+### 2026-10-30: the app carries everything and starts straight into the game
+
+- **Self-contained bundle.** `make app` (now `SELF_CONTAINED=1` by default) copies the runtime into
+  `Contents/Resources/work`: the rewritten modules, the merged 1.0.1 RomFS, the shared fonts, the patch tables, the
+  shader tools and `build/alc-native` itself — 9.9 GB, cloned instantly with APFS clonefile. The launcher prefers that
+  folder over the Info.plist's build-time path, so the app runs from anywhere (another Mac, a copy, a USB disk) with
+  nothing else installed. `SELF_CONTAINED=0` keeps the old thin app. This also surfaced a Makefile bug worth recording:
+  `$APP` in a recipe is `$(A)PP` to make, so the first run of the copy step wrote a stray `PP/` folder — the recipe uses
+  `$(APP)` now.
+- **Straight into the game, like the TotK app.** The settings window no longer appears at launch, not even on the first
+  run: without saved settings the Recommended preset is written in place (60 fps, fixed 1080p, MetalFX) and the game
+  starts at once. Launching with **Option held** still opens the window for presets, internal resolution, fullscreen and
+  the mods; everything else (overlay, frame lock, interpolation, controller, key bindings, rumble/gyro) lives in the
+  in-game settings panel on key 1.
+- **Shader cache stays outside the bundle**: the launcher points `TOTK_SHADER_CACHE` at
+  `~/Library/Application Support/MacNativeGames/ALC/shader-cache`, so a shipped app is never written to and the seed
+  inside it remains the reference; the first start imports the seed (1062 files) into that cache.
+
+**Verified** from a fresh state (defaults deleted, launched from Finder): no window, the log shows work =
+`/Applications/Astral Chain.app/Contents/Resources/work`, both patches applied, seed imported 1062/1062, swapchain
+1920x1080, saves in `MacNativeGames/ALC/profile/save/…`, and the game picture on screen within 4.7 s of the first
+start (the import and first-run compiles included).

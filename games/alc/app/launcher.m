@@ -39,7 +39,15 @@ static const int outputs[] = {0, 2160, 1440, 1080, 900};
 
 static NSString *work_folder(void) {
     const char *e = getenv("ALC_WORK");
-    return e && *e ? @(e) : [NSBundle.mainBundle objectForInfoDictionaryKey:@"ALCWorkFolder"];
+    if (e && *e) return @(e);
+    /* A self-contained bundle carries the runtime in Contents/Resources/work (make app copies it in): that folder wins,
+       so the app runs from anywhere — another Mac, a copy, a USB disk — without this repository. */
+    NSString *res = NSBundle.mainBundle.resourcePath;
+    NSArray<NSString *> *cands = @[ res ? [res stringByAppendingPathComponent:@"work"] : @"",
+                                    [NSBundle.mainBundle.bundlePath stringByAppendingPathComponent:@"Contents/Resources/work"] ];
+    for (NSString *packed in cands)
+        if (packed.length && [NSFileManager.defaultManager fileExistsAtPath:[packed stringByAppendingPathComponent:@"rewritten/v101"]]) return packed;
+    return [NSBundle.mainBundle objectForInfoDictionaryKey:@"ALCWorkFolder"];
 }
 static BOOL have_patch(NSString *slug) {
     return [NSFileManager.defaultManager fileExistsAtPath:[work_folder() stringByAppendingFormat:@"/patches/%@.tsv", slug]];
@@ -232,9 +240,32 @@ int main(int argc, char **argv) {
     (void)argc; (void)argv;
     @autoreleasepool {
         [NSApplication sharedApplication]; NSApp.activationPolicy = NSApplicationActivationPolicyRegular;
-        Launcher *l = [Launcher new]; NSApp.delegate = l;
-        [NSApp run];
-        if (!l.launch) return 0;
+        /* Like the TotK app: straight into the game. The window is shown only when it has something to say — the first
+           run (no saved settings yet) or when Option is held at launch, which is also how the saved settings are
+           changed (the presets, internal resolution, fullscreen, mods); the in-game settings panel (key 1) covers the
+           rest during play. */
+        NSUserDefaults *defaults = NSUserDefaults.standardUserDefaults;
+        if ([defaults objectForKey:@"fps"] == nil) {
+            /* First run: the Recommended preset written in place (60 fps, fixed 1080p, MetalFX), no window — the game
+               starts at once like the TotK app; Option at launch opens the settings window to change it. */
+            [defaults setInteger:60 forKey:@"fps"];
+            [defaults setInteger:2 forKey:@"fixed900"];
+            [defaults setBool:YES forKey:@"metalfx"];
+            [defaults setInteger:0 forKey:@"interp"];
+            [defaults setBool:NO forKey:@"fullscreen"];
+            [defaults setInteger:2 forKey:@"size"];
+            [defaults setBool:YES forKey:@"hud"];
+            [defaults setBool:NO forKey:@"lod"];
+            [defaults setBool:NO forKey:@"nograin"];
+            [defaults setInteger:1 forKey:@"preset"];
+            [defaults synchronize];
+        }
+        BOOL wantWindow = (NSEvent.modifierFlags & NSEventModifierFlagOption) != 0;   /* hold Option to change settings */
+        if (wantWindow) {
+            Launcher *l = [Launcher new]; NSApp.delegate = l;
+            [NSApp run];
+            if (!l.launch) return 0;
+        }
         NSUserDefaults *d = NSUserDefaults.standardUserDefaults;
         NSString *work = work_folder(), *home = NSHomeDirectory();
         /* Same layout as every port in this repository: ~/Library/Application Support/MacNativeGames/<GAME_FOLDER>
@@ -243,6 +274,10 @@ int main(int argc, char **argv) {
         NSString *logs = [home stringByAppendingPathComponent:@"Library/Logs/MacNativeGames"];
         NSString *profile = [data stringByAppendingPathComponent:@"profile"], *slot = [data stringByAppendingPathComponent:@"game-slot"];
         if (!make_dir(profile) || !make_dir(slot) || !make_dir(logs)) { fail([NSString stringWithFormat:@"%@", data]); return 1; }
+        /* Translations this run makes go to the user's data folder, never into the bundle (so a shipped app stays as
+           built, and the seed inside it stays the reference). */
+        { NSString *cache = [data stringByAppendingPathComponent:@"shader-cache"]; make_dir(cache);
+          setenv("TOTK_SHADER_CACHE", cache.fileSystemRepresentation, 1); }
         /* The shader seed shipped inside the app (make shader-seed; TotK's TOTK_SHADER_SEED_DIR): read in place, so a
            first run with it translates nothing and starts at full pace. */
         { NSString *seed = [NSBundle.mainBundle.resourcePath stringByAppendingPathComponent:@"shader-seed"];
