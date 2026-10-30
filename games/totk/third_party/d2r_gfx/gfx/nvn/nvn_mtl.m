@@ -6467,9 +6467,11 @@ static MTLSamplerAddressMode wrapm(int w) {
     return MTLSamplerAddressModeRepeat;
 }
 /* Anisotropic filtering for the game's material textures (samp_by_id): TOTK_ANISO, or the settings panel's choice given
-   before the guest starts (dm_gfx_aniso_start; graphics-aniso.txt). Samplers are made once and the game's sampler pools
-   hold them, so a change in play is kept for the next launch: dm_gfx_aniso is the level in force, fixed at the first
-   sampler. */
+   before the guest starts (dm_gfx_aniso_start; graphics-aniso.txt) or in play (dm_gfx_aniso_set). The game's sampler
+   pools hold sampler numbers; the Metal sampler each number stands for is made at its first use and kept (g_sview /
+   g_srid), and the argument encoding reads it at every encode. A change drops those Metal samplers the way a game's
+   re-registration of a sampler does (registry lock, g_reg_gen, so no argument buffer is reused with the old ones), but
+   released only after the GPU is done with them; each is made again at its next use with the new level. */
 static _Atomic int g_aniso_saved, g_aniso_now = -1;
 void dm_gfx_aniso_start(int n) { atomic_store(&g_aniso_saved, n < 0 ? 0 : n > 16 ? 16 : n); }
 int dm_gfx_aniso_locked(void) { return getenv("TOTK_ANISO") != NULL; }
@@ -6479,6 +6481,17 @@ int dm_gfx_aniso(void) {
                  int was = -1; if (atomic_compare_exchange_strong(&g_aniso_now, &was, v)) { if (v > 1) MLOG("各向异性过滤 %dx（材质贴图；%s）", v, getenv("TOTK_ANISO") ? "TOTK_ANISO" : "设置面板"); }
                  else v = was; }
     return v;
+}
+void dm_gfx_aniso_set(int n) {
+    n = n < 0 ? 0 : n > 16 ? 16 : n;
+    if (getenv("TOTK_ANISO") || dm_gfx_aniso() == n) return;
+    registry_lock();
+    atomic_store(&g_aniso_now, n);
+    int dropped = 0;
+    for (int i = 0; i < g_nsreg; i++) if (g_sview && g_sview[i]) { defer_obj_release(CFBridgingRelease(g_sview[i])); g_sview[i] = NULL; g_srid[i] = 0; dropped++; }
+    g_reg_gen++;
+    registry_unlock();
+    MLOG("各向异性过滤 %dx（设置面板，立即生效：%d 个采样器重建）", n, dropped);
 }
 static id<MTLSamplerState> samp_by_id(int sid) {   // 调用方持 g_rmu | Caller holds g_rmu
     if (sid < 0 || sid >= g_nsreg || !g_sreg_ok[sid]) { RED_ONCE(12, "采样器号 %d 未登记", sid); return nil; }

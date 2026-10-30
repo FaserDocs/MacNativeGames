@@ -379,8 +379,8 @@ static void patch_lod_distance(Module *m){
    main+0x628c20..0x628c44. The far load branches to a stub that keeps the game's value on the data page (+0x188, for
    "farscale" to print) and multiplies it by the factor at +0x184. x8 is reloaded at 0x628c6c and s2 is caller-saved across
    the sin / cos / tan calls that follow, so the stub may use both. The game's far is 25000 (measured 2026-10-30 in the
-   field and in Lookout Landing), more than the whole map: a larger factor shows nothing more, a smaller one cuts the
-   distance (fewer distant draws). Always installed on the Mac: at 1 the far plane is the game's own. */
+   field and in Lookout Landing), more than the whole map: a smaller factor cuts the distance (fewer distant draws); the
+   panel offers 1x to 10x (user 2026-10-30), past what the map needs. Always installed on the Mac: at 1 the far plane is the game's own. */
 #define FAR_DATA_SLOT 0x184u
 #if !TARGET_OS_IPHONE
 static _Atomic uint32_t *far_factor;

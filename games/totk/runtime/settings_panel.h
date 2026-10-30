@@ -39,8 +39,8 @@
    Kingdom 1.4.3's, greyed on other versions; "Reset to defaults" at the bottom right sets every row back to the game's own
    and removes its file, a row the environment decides staying)
      edge smoothing       switch                             taa_set (gfx/nvn/totk_taa.m)
-     anisotropic filtering off / 2x / 4x / 8x / 16x          dm_gfx_aniso_start (gfx/nvn/nvn_mtl.m), graphics-aniso.txt; from
-                                                             the next launch (samplers are made once); TOTK_ANISO first
+     anisotropic filtering off / 2x / 4x / 8x / 16x          dm_gfx_aniso_set (gfx/nvn/nvn_mtl.m: the samplers made again),
+                                                             at once; graphics-aniso.txt; TOTK_ANISO first
      ambient occlusion    off / 1.5x / 2x / 3x, default off  dm_gfx_ssao_* (gfx/nvn/totk_ssao.h, PR #1316), saved in ssao.txt
                                                              (off or the strength and radius in percent); Tears of the
                                                              Kingdom 1.4.3 and Breath of the Wild 1.9.0 only. Its shaders
@@ -50,9 +50,10 @@
      model detail distance 1x / 2x / 4x / 10x / 20x / 50x / runtime_lod_scale_set (game_patches_v143.c): the level of
                                                              detail a model gets at a distance is the one it had at
      100x                                                    1/K of it; graphics-lod.txt (x100); TOTK_LOD_SCALE first
-     render distance      100% / 50% / 25% / 10% / 1% / 0.1% runtime_far_scale_set: the camera's far plane (the game's
-                                                             25000 already spans the map, so only less is offered);
-                                                             graphics-far.txt (percent); TOTK_FAR_SCALE first
+     render distance      1x .. 10x                          runtime_far_scale_set: the camera's far plane x K (user
+                                                             2026-10-30: larger, not smaller; the game's 25000 already
+                                                             spans the map); graphics-far.txt (percent); TOTK_FAR_SCALE
+                                                             first
      field of view        0.8x .. 1.5x                       runtime_fov_scale_set: the game camera's vertical FOV
                                                              (its zooms scale too); graphics-fov.txt (x100)
      model detail distance also "always the finest" (graphics-lod.txt "max": the level a model has up close)
@@ -85,7 +86,7 @@
 
 void dm_gfx_set_flag(const char *name, int value);
 void dm_gfx_ssao_start(int pct); int dm_gfx_ssao_locked(void); int dm_gfx_ssao_live(void); void dm_gfx_ssao_set(int pct);   /* totk_ssao.h */
-void dm_gfx_aniso_start(int n); int dm_gfx_aniso_locked(void); int dm_gfx_aniso(void);   /* gfx/nvn/nvn_mtl.m */
+void dm_gfx_aniso_start(int n); int dm_gfx_aniso_locked(void); int dm_gfx_aniso(void); void dm_gfx_aniso_set(int n);   /* gfx/nvn/nvn_mtl.m */
 void nvn_fps_lock_set(int fps);   /* gfx/nvn/hle_nvn.c: the shared totk_fps_limits choices */
 #ifdef TOTK_GAME_V143   /* the effects page: its shader keys and patch sites are 1.4.3's */
 int dm_gfx_fx_count(void); const char *dm_gfx_fx_id(int i); const char *dm_gfx_fx_name(int i, int english);   /* totk_fx.h */
@@ -144,7 +145,6 @@ static void settings_save_frame(void) {
 #define SETTINGS_SSAO 1
 #endif
 static int settingsSsao;   /* the saved choice: 0 off, else percent */
-static int settingsAniso=-1;   /* anisotropic filtering: the saved pick, -1 = none saved */
 static void settings_ssao_restore(void) {
  char word[32];if(!runtime_setting_word("ssao.txt",word,sizeof word))return;
  const char *w;size_t n=feedback_word(word,&w);char *end;long pct=strtol(w,&end,10);
@@ -180,7 +180,7 @@ static void settings_effects_restore(void) {
  if(!runtime_fov_scale_locked()&&settings_read_number("graphics-fov.txt",50,200,&d))runtime_fov_scale_set(d/100);
  if(runtime_setting_word("graphics-fxaa.txt",word,sizeof word)&&!strncmp(word,"off",3))dm_gfx_fxaa_set(0);
  if(settings_read_number("graphics-sharpen.txt",0,100,&d))dm_gfx_sharpen_set((int)d);
- if(!runtime_far_scale_locked()&&settings_read_number("graphics-far.txt",0.1,100,&d))runtime_far_scale_set(d/100);
+ if(!runtime_far_scale_locked()&&settings_read_number("graphics-far.txt",0.1,1000,&d))runtime_far_scale_set(d/100);
 }
 #else
 static void settings_effects_restore(void) {}
@@ -196,7 +196,7 @@ static void settings_restore_begin(void) {
  }
  if(!getenv("TOTK_TAA")&&settings_read_int("graphics-taa.txt",&v)&&(v==0||v==1))taa_set(v);
  settings_ssao_restore();
- if(!dm_gfx_aniso_locked()&&settings_read_int("graphics-aniso.txt",&v)&&v<=16){settingsAniso=v;dm_gfx_aniso_start(v);}
+ if(!dm_gfx_aniso_locked()&&settings_read_int("graphics-aniso.txt",&v)&&v<=16)dm_gfx_aniso_start(v);
  settings_effects_restore();
  const char *output=getenv("TOTK_OUTPUT_RES");
  if((!output||!*output||!strcmp(output,"auto"))&&!getenv("TOTK_MFX_OUTPUT")&&!getenv("TOTK_MFX_UPSCALE")&&
@@ -353,10 +353,10 @@ static TOTKSettingRow *settings_distance_row(int lod) {
  int now=current();
  NSString *(^text)(int)=^NSString *(int v){
   if(v<0)return settings_text("始终最高精度","Always the finest");
-  if(v==unit)return lod?settings_text("1×（游戏原样）","1x (as the game has it)"):settings_text("100%（游戏原样）","100% (as the game has it)");
-  return lod?[NSString stringWithFormat:@"%g×",v/100.0]:[NSString stringWithFormat:@"%g%%",v/10.0];};
+  if(v==unit)return settings_text("1×（游戏原样）","1x (as the game has it)");
+  return [NSString stringWithFormat:@"%g×",v/unit];};
  if(lod?runtime_lod_scale_locked():runtime_far_scale_locked())return settings_fixed(t,text(now));
- NSMutableArray<NSNumber *> *values=[(lod?@[@100,@200,@400,@1000,@2000,@5000,@10000,@-1]:@[@1000,@500,@250,@100,@10,@1]) mutableCopy];
+ NSMutableArray<NSNumber *> *values=[(lod?@[@100,@200,@400,@1000,@2000,@5000,@10000,@-1]:@[@1000,@2000,@3000,@4000,@5000,@6000,@7000,@8000,@9000,@10000]) mutableCopy];
  if(![values containsObject:@(now)])[values addObject:@(now)];
  NSMutableArray<NSString *> *choices=[NSMutableArray array];for(NSNumber *v in values)[choices addObject:text(v.intValue)];
  return settings_row(t,choices,values,current,^(int v){
@@ -397,27 +397,23 @@ static NSArray<TOTKSettingRow *> *settings_effect_rows(void) {   /* other versio
           settings_fixed(settings_text("效果开关","Effect switches"),none)];
 }
 #endif
-/* Anisotropic filtering: off (the game's 1x) to 16x for the material textures; the samplers are made once, so a pick is
-   kept for the next launch (the title says so while it differs from the level in force). */
+/* Anisotropic filtering: off (the game's 1x) to 16x for the material textures, in force at once (dm_gfx_aniso_set makes
+   the game's samplers again with the new level). */
 static TOTKSettingRow *settings_aniso_row(void) {
  NSString *t=settings_text("各向异性过滤","Anisotropic filtering");
  NSString *(^text)(int)=^NSString *(int v){return v<=1?settings_text("关（游戏原样）","Off (as the game has it)"):[NSString stringWithFormat:@"%d×",v];};
- int now=dm_gfx_aniso()<=1?0:dm_gfx_aniso();
- if(dm_gfx_aniso_locked())return settings_fixed(t,text(now));
- int want=settingsAniso<0?now:settingsAniso;
- if(want!=now)t=[t stringByAppendingString:settings_text("（下次启动生效）"," (from the next launch)")];
- return settings_row(t,@[text(0),text(2),text(4),text(8),text(16)],@[@0,@2,@4,@8,@16],^int{return settingsAniso<0?now:settingsAniso;},^(int v){
-  settingsAniso=v;settings_save_int("graphics-aniso.txt",v,"anisotropic filtering");
-  dispatch_async(dispatch_get_main_queue(),^{settings_rebuild();});});   /* the title says whether it waits for the next launch */
+ if(dm_gfx_aniso_locked())return settings_fixed(t,text(dm_gfx_aniso()));
+ return settings_row(t,@[text(0),text(2),text(4),text(8),text(16)],@[@0,@2,@4,@8,@16],^int{return dm_gfx_aniso()<=1?0:dm_gfx_aniso();},^(int v){
+  dm_gfx_aniso_set(v);settings_save_int("graphics-aniso.txt",v,"anisotropic filtering");});
 }
 /* The effects page's "Reset to defaults" (user 2026-10-30): every row of the page back to the game's own, its file removed;
-   a row the environment decides stays. Anisotropy goes back to off from the next launch, as any pick of it. */
+   a row the environment decides stays. */
 static void settings_effects_reset(void) {
  if(!getenv("TOTK_TAA")){taa_set(0);runtime_setting_remove("graphics-taa.txt");}
 #ifdef SETTINGS_SSAO
  if(!dm_gfx_ssao_locked()&&dm_gfx_ssao_live()){settingsSsao=0;dm_gfx_ssao_set(0);runtime_setting_remove("ssao.txt");}
 #endif
- if(!dm_gfx_aniso_locked()){settingsAniso=0;runtime_setting_remove("graphics-aniso.txt");}
+ if(!dm_gfx_aniso_locked()){dm_gfx_aniso_set(0);runtime_setting_remove("graphics-aniso.txt");}
 #ifdef TOTK_GAME_V143
  if(!runtime_fov_scale_locked())runtime_fov_scale_set(1);
  if(!runtime_lod_scale_locked())runtime_lod_scale_set(1);

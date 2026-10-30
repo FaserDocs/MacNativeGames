@@ -38,7 +38,9 @@ static int fakeFxOn[2] = {1, 1};
 static int fakeAnisoStart = -1, fakeFxaa = 1, fakeSharpen;
 void dm_gfx_aniso_start(int n) { fakeAnisoStart = n; }
 int dm_gfx_aniso_locked(void) { return 0; }
-int dm_gfx_aniso(void) { return 0; }   /* the game's 1x in force */
+static int fakeAniso;
+int dm_gfx_aniso(void) { return fakeAniso; }
+void dm_gfx_aniso_set(int n) { fakeAniso = n; }
 void dm_gfx_fxaa_set(int on) { fakeFxaa = on; }
 int dm_gfx_fxaa_on(void) { return fakeFxaa; }
 void dm_gfx_sharpen_set(int pct) { fakeSharpen = pct; }
@@ -407,11 +409,11 @@ int main(int argc, const char **argv) { @autoreleasepool {
 #endif
     /* The effects page (2026-10-30): the two distances (1.4.3 only) and a switch per effect, each in force and saved at once. */
 #ifdef TOTK_GAME_V143
-    shows(@"Model detail distance (LOD)", @"1x (as the game has it)"); shows(@"Render distance", @"100% (as the game has it)");
+    shows(@"Model detail distance (LOD)", @"1x (as the game has it)"); shows(@"Render distance", @"1x (as the game has it)");
     pick(@"Model detail distance (LOD)", @"4×"); assert(runtime_lod_scale() == 4 && !strcmp(savedName, "graphics-lod.txt") && !strcmp(savedWord, "400"));
-    pick(@"Render distance", @"25%"); assert(runtime_far_scale() == 0.25 && !strcmp(savedName, "graphics-far.txt") && !strcmp(savedWord, "25"));
+    pick(@"Render distance", @"3×"); assert(runtime_far_scale() == 3 && !strcmp(savedName, "graphics-far.txt") && !strcmp(savedWord, "300"));
     pick(@"Model detail distance (LOD)", @"100×"); assert(runtime_lod_scale() == 100 && !strcmp(savedWord, "10000"));
-    pick(@"Render distance", @"0.1%"); assert(runtime_far_scale() == 0.001 && !strcmp(savedWord, "0.1"));
+    pick(@"Render distance", @"10×"); assert(runtime_far_scale() == 10 && !strcmp(savedWord, "1000"));
     pick(@"Model detail distance (LOD)", @"Always the finest"); assert(runtime_lod_scale() >= 1e6 && !strcmp(savedWord, "max"));
     shows(@"Field of view (FOV)", @"1x (as the game has it)");
     pick(@"Field of view (FOV)", @"1.2×"); assert(runtime_fov_scale() == 1.2 && !strcmp(savedName, "graphics-fov.txt") && !strcmp(savedWord, "120"));
@@ -421,16 +423,16 @@ int main(int argc, const char **argv) { @autoreleasepool {
     pick(@"Sharpening", @"50%"); assert(fakeSharpen == 50 && !strcmp(savedName, "graphics-sharpen.txt") && !strcmp(savedWord, "50"));
     pick(@"Sharpening", @"Off (as the game has it)"); assert(!fakeSharpen);
     /* "Reset to defaults" (the effects page's bottom right): every row back to the game's own, the files removed. */
-    pick(@"Field of view (FOV)", @"1.3×"); pick(@"Model detail distance (LOD)", @"10×"); pick(@"Render distance", @"25%");
+    pick(@"Field of view (FOV)", @"1.3×"); pick(@"Model detail distance (LOD)", @"10×"); pick(@"Render distance", @"5×");
     flip(@"FXAA anti-aliasing", NO); pick(@"Sharpening", @"75%"); flip(@"Bloom", NO);
     [settingsPanel selectPage:SETTINGS_PAGE_EFFECTS]; tick();
     NSButton *resetEffects = settingsPanel.effectsButtons[0];
     assert(!resetEffects.hidden && [resetEffects.title isEqualToString:@"Reset to defaults"] && [settingsPanel.controllerTargets containsObject:resetEffects]);
     [resetEffects performClick:nil]; tick();
-    assert(runtime_fov_scale() == 1 && runtime_lod_scale() == 1 && runtime_far_scale() == 1 && fakeFxaa && !fakeSharpen && fakeFxOn[0] && fakeFxOn[1]);
+    assert(runtime_fov_scale() == 1 && runtime_lod_scale() == 1 && runtime_far_scale() == 1 && fakeFxaa && !fakeSharpen && fakeFxOn[0] && fakeFxOn[1] && !fakeAniso);
     assert(!strcmp(removedName, "graphics-effects.txt") && settingsPanel.page == SETTINGS_PAGE_EFFECTS);
     [settingsPanel selectPage:SETTINGS_PAGE_DISPLAY]; tick();
-    pick(@"Model detail distance (LOD)", @"1x (as the game has it)"); pick(@"Render distance", @"100% (as the game has it)"); assert(runtime_lod_scale() == 1 && runtime_far_scale() == 1);
+    pick(@"Model detail distance (LOD)", @"1x (as the game has it)"); pick(@"Render distance", @"1x (as the game has it)"); assert(runtime_lod_scale() == 1 && runtime_far_scale() == 1);
     assert(switched(@"Bloom")); flip(@"Bloom", NO); assert(!fakeFxOn[1] && !strcmp(savedName, "graphics-effects.txt") && !strcmp(savedWord, "bloom"));
     flip(@"Ambient occlusion", NO); assert(!strcmp(savedWord, "ao bloom"));
     flip(@"Bloom", YES); flip(@"Ambient occlusion", YES); assert(fakeFxOn[0] && fakeFxOn[1] && !strcmp(savedWord, "none"));
@@ -438,9 +440,10 @@ int main(int argc, const char **argv) { @autoreleasepool {
     shows(@"Render distance", @"Not in this version"); assert(!menu(@"Render distance").enabled);
     shows(@"Effect switches", @"Not in this version"); shows(@"Sharpening", @"Not in this version");
 #endif
-    /* Anisotropic filtering (display page, every version): kept for the next launch, which the title says once it differs. */
+    /* Anisotropic filtering (effects page, every version): in force at once. */
     shows(@"Anisotropic filtering", @"Off (as the game has it)");
-    pick(@"Anisotropic filtering", @"16×"); assert(!strcmp(savedName, "graphics-aniso.txt") && !strcmp(savedWord, "16"));
+    pick(@"Anisotropic filtering", @"16×"); assert(fakeAniso == 16 && !strcmp(savedName, "graphics-aniso.txt") && !strcmp(savedWord, "16"));
+    shows(@"Anisotropic filtering", @"16×");
     assert(!switched(@"Mouse")); flip(@"Mouse", YES); assert(fakeMouse && switched(@"Mouse")); flip(@"Mouse", NO); assert(!fakeMouse);
 
     /* The DualSense bow trigger: a switch; greyed out while TOTK_DUALSENSE_TRIGGERS or a test session decides, and on a
