@@ -894,7 +894,16 @@ static FILE *mng_open_base(const char *path) {
     return source/'hactool'
 
 
-def step_update_data(tree, game, update, keys, logs, *, version='v112', mod=None):
+def remove_4k_overlay(tree, version):
+    """The overlays for a 3840x2160 canvas (with or without a scene size) left by an earlier build are removed before each
+    build: without --native-4k the runtime then keeps 2560x1440 as its largest output size (its swapchain and heaps;
+    runtime/game_patches_v143.c), with it the build makes the current set again."""
+    for folder in (tree / f'extracted/{version}/romfs-patches-out').glob('3840x2160*'):
+        if folder.is_dir():
+            shutil.rmtree(folder)
+
+
+def step_update_data(tree, game, update, keys, logs, *, version='v112', mod=None, native_4k=False):
     expected = VERSIONS[version]
     folder = tree/f'extracted/{version}/romfs'
     index = folder/'index.json'
@@ -923,6 +932,12 @@ def step_update_data(tree, game, update, keys, logs, *, version='v112', mod=None
     if version == 'v143':   # a TOTK_RENDER_RES scene above 1600x900 grows the same heaps (runtime/game_patches_v143.c)
         steps += [('make_output_res_overlay.py', [canvas, '--scene', scene])
                   for canvas in ('1920x1080', *OUTPUT_SIZES) for scene in ('1920x1080', *OUTPUT_SIZES)]
+    remove_4k_overlay(tree, version)   # an earlier build's 4K overlays go; --native-4k makes the current ones
+    if native_4k:   # --native-4k: the runtime takes 3840x2160 as its largest output size (the settings panel gains native 4K)
+        steps.append(('make_output_res_overlay.py', ['3840x2160']))   # TOTK_RENDER_RES=0: the game's own scene size
+        # 2560x1440: the 2K canvas's scene, the largest a 4K app renders (runtime/game_patches_v143.c render_res); 1920x1080: TOTK_RENDER_RES
+        steps += [('make_output_res_overlay.py', ['3840x2160', '--scene', scene])
+                  for scene in ('1920x1080', '2560x1440')]   # a 3840x2160 scene is over the 1 GiB zero-copy limit
     for i, (script, arguments) in enumerate(steps):
         if heapdef and script == 'make_output_res_overlay.py':   # every variant of the file keeps the mod's heap sizes
             arguments = [*arguments, '--heapdef', heapdef]
@@ -2043,6 +2058,7 @@ def parse_args(argv):
                          'the build leaves the folder alone and prints the two commands that fill it by hand')
     ap.add_argument('--shader-cache', type=Path, help=argparse.SUPPRESS)   # removed: the seed comes from the game data and the shared list
     ap.add_argument('--no-shader-reminder', action='store_true', help='iOS: do not install the Mac agent that asks, while an iPhone / iPad with the game is connected, to send the shaders the shared list lacks')
+    ap.add_argument('--native-4k', action='store_true', help='Mac, 1.4.3: the settings panel also offers native 4K (a 3840x2160 canvas and UI, a 3200x1800 scene); the game then reserves its swapchain and texture heaps for 4K (810 MiB more texture heap)')
     fonts = ap.add_mutually_exclusive_group()
     fonts.add_argument('--firmware', type=Path, help='unpacked firmware NCA directory providing the six expected shared fonts (needed for NSP unless --shared-fonts or valid cached fonts are available; Breath of the Wild 1.9.0 too)')
     fonts.add_argument('--shared-fonts', type=Path, help='previously extracted shared-font directory containing the six verified .bfttf files')
@@ -2210,13 +2226,15 @@ def main(argv):
             f'<folder>.backup-<date>-<time>, not deleted. Without the flag the build leaves the folder alone.')
     if update:
         version, update = identify_update(tree, update, keys, logs)
+    if args.native_4k and (args.platform == 'ios' or version != 'v143'):
+        raise BuildError('--native-4k needs the 1.4.3 update and a Mac build (the other versions and iPhone / iPad have no 4K output)')
     step_code(tree, game, keys, env, logs, mod=None if update else code_mod)
     if update:
         step_code(tree, update, keys, env, logs, version=version,
                   mod=code_mod)   # a mod is for the updated main, not for 1.0.0
     step_data(tree, game, keys, logs, firmware=firmware, shared_fonts=shared_fonts, mod=None if update else mod)
     if update:
-        step_update_data(tree, game, update, keys, logs, version=version, mod=mod)
+        step_update_data(tree, game, update, keys, logs, version=version, mod=mod, native_4k=args.native_4k)
     if mod:
         check_mod_overlays(tree, mod, version)
     step_shaders(tree, logs, version=version)
