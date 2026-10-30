@@ -630,3 +630,26 @@ usable for a player:
 
 `scripts/extract_shared_fonts.py` was missing from this folder (the icon script imports it); copied from games/by3
 unchanged and recorded in third_party/COPIES.md.
+
+### 2026-10-30: dropping to 30 fps ran at half speed — the step floor now follows the present pace
+
+The player's "switching to the 30 fps limit slow-motions the whole game": with the 60 FPS patch the logic-step floor
+is a patched 0.5 (half a 30-fps step per 16.7 ms frame — the point of the patch), but the floor must follow the
+*pace*, not the work time. Pacing to 30 fps (interp "30+30", or any interval-2 mode) spaces frames 33.3 ms apart while
+a frame's measured work stays ~17 ms (present waits are not counted), so the raw step is 0.5 and the constant 0.5
+floor froze the logic at half speed.
+
+The floor is now adaptive: `runtime_game_patches_note_present_gap(ms)` is called by the graphics layer at every
+present (`present_now` reports the gap to the previous one), keeps a 32-sample median (one loading hitch must not
+move it; gaps over 60 ms are ignored as loading), and derives floor = gap/16.67 × 0.5, clamped 0.5..2.0, quantized to
+a quarter step. On a change it rewrites the three floor sites in place through `mach_vm_protect` (plain `mprotect`
+returns EINVAL across the loader's sub-mappings — the Mach call handles the same range), flushing the icache. The
+rewrite accepts the current floor's words, the target's, or the stock ones; anything else is refused with a log line.
+
+**Verified in gameplay** (`flag mfx_interp 1` after reaching the field): floor transitions 0.5 → 0.75 → 1.00 as the
+pace settles at 33.3 ms and the game runs at correct speed at 30 fps; back at 60 fps the floor returns to 0.5. Note:
+while the game's dynamic resolution is below the canvas (1280x810 at the reduced level) the interpolation reports
+missing depth and shows the game's own frame — no fill, no wash, and still correct speed.
+
+On the way: `AC_build/extracted/v101/main.decompressed.bin` is produced by the NSO decoder in `prepare_modules.py`
+(the raw layout parse in a scratch script was wrong); this analysis image is regenerated, not committed.

@@ -12167,6 +12167,11 @@ static void cadence_note(double tt, int interp) {
 static int present_now(const tex_t *t, double period, uint64_t frame, uint64_t ticket, const int crop[4], id<CAMetalDrawable> supplied, double target_ts, int interp) {
     if (g_present_stall_ns) { struct timespec ts = {0, (long)g_present_stall_ns}; nanosleep(&ts, NULL); }
     g_present_n++;
+    { /* The gap between presents is what the logic-step floor follows (60 fps pace -> 0.5, 30 -> 1.0): with the
+         60 FPS patch the floor is a patched immediate, rewritten here per pace change (game_patches.c). */
+      static long pf_last; long now = now_ns();
+      if (pf_last) { float gap = (now - pf_last) / 1e6f; if (gap > 4.0f && gap < 200.0f) { extern void runtime_game_patches_note_present_gap(float); runtime_game_patches_note_present_gap(gap); } }
+      pf_last = now; }
     /* TOTK: the FPS box counts game presents per second and, while MetalFX interpolates, the generated frames shown as
        well ("FPS 50+50"): the user found the plain displayed count misleading on the phone ("the number looks good, it
        feels slow"), so both are shown. */
