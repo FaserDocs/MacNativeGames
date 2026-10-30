@@ -2700,6 +2700,8 @@ void dm_gfx_set_flag(const char *name, int v) {
         atomic_store(&g_diag_skip_fs, v ? strtoull(p, NULL, 16) : 0);
         MLOG("[flag] diagnostic skipfs %.16s = %d (incomplete geometry; invalid FPS)", p, v != 0); return;
     }
+    if (!strcmp(name, "fxaa_off")) { extern void dm_gfx_fxaa_set(int on); dm_gfx_fxaa_set(!v); return; }   // totk_finish.h
+    if (!strcmp(name, "sharpen_pct")) { extern void dm_gfx_sharpen_set(int pct); dm_gfx_sharpen_set(v); return; }
     if (!strncmp(name, "fx_", 3)) {   // "flag fx_<id> <0|1>": an effect switch (totk_fx.h), 0 = off
         extern int dm_gfx_fx_count(void); extern const char *dm_gfx_fx_id(int i); extern void dm_gfx_fx_set(int i, int on);
         for (int i = 0; i < dm_gfx_fx_count(); i++) if (!strcmp(name + 3, dm_gfx_fx_id(i))) { dm_gfx_fx_set(i, v != 0); return; }
@@ -6464,6 +6466,19 @@ static MTLSamplerAddressMode wrapm(int w) {
         case 6: return MTLSamplerAddressModeMirrorRepeat; }
     return MTLSamplerAddressModeRepeat;
 }
+/* Anisotropic filtering for the game's material textures (samp_by_id): TOTK_ANISO, or the settings panel's choice given
+   before the guest starts (dm_gfx_aniso_start; graphics-aniso.txt). Samplers are made once and the game's sampler pools
+   hold them, so a change in play is kept for the next launch: dm_gfx_aniso is the level in force, fixed at the first
+   sampler. */
+static _Atomic int g_aniso_saved, g_aniso_now = -1;
+void dm_gfx_aniso_start(int n) { atomic_store(&g_aniso_saved, n < 0 ? 0 : n > 16 ? 16 : n); }
+int dm_gfx_aniso_locked(void) { return getenv("TOTK_ANISO") != NULL; }
+int dm_gfx_aniso(void) {
+    int v = atomic_load(&g_aniso_now);
+    if (v < 0) { const char *e = getenv("TOTK_ANISO"); v = e ? atoi(e) : atomic_load(&g_aniso_saved); v = v < 0 ? 0 : v > 16 ? 16 : v;
+                 int was = -1; if (!atomic_compare_exchange_strong(&g_aniso_now, &was, v)) v = was; }
+    return v;
+}
 static id<MTLSamplerState> samp_by_id(int sid) {   // 调用方持 g_rmu | Caller holds g_rmu
     if (sid < 0 || sid >= g_nsreg || !g_sreg_ok[sid]) { RED_ONCE(12, "采样器号 %d 未登记", sid); return nil; }
     if (g_sview[sid]) return (__bridge id<MTLSamplerState>)g_sview[sid];
@@ -6484,9 +6499,9 @@ static id<MTLSamplerState> samp_by_id(int sid) {   // 调用方持 g_rmu | Calle
        mipmapped and repeating ones (ground, walls, foliage seen at a grazing angle; the game asks for 1x everywhere).
        Clamped samplers keep the game's setting: some read data rather than colour, and anisotropy there left bright
        green pixels along Link's outline in the inventory (150-240 per frame at 3440x1440, 8-17 without). Point-sampled
-       lookups, unmipmapped targets, shadow-compare and min / max samplers keep it too; values above 16 mean 16. */
-    static int aniso = -1;
-    if (aniso < 0) { const char *e = getenv("TOTK_ANISO"); aniso = e ? atoi(e) : 0; aniso = aniso < 0 ? 0 : aniso > 16 ? 16 : aniso; }
+       lookups, unmipmapped targets, shadow-compare and min / max samplers keep it too; values above 16 mean 16.
+       Without TOTK_ANISO, the settings panel's choice (graphics-aniso.txt, dm_gfx_aniso_start before the guest starts). */
+    int aniso = dm_gfx_aniso();
     BOOL repeats = (d.sAddressMode == MTLSamplerAddressModeRepeat || d.sAddressMode == MTLSamplerAddressModeMirrorRepeat) &&
                    (d.tAddressMode == MTLSamplerAddressModeRepeat || d.tAddressMode == MTLSamplerAddressModeMirrorRepeat);
     BOOL material = !p.cmp_mode && !p.reduction && d.minFilter == MTLSamplerMinMagFilterLinear && d.magFilter == MTLSamplerMinMagFilterLinear &&
@@ -12414,12 +12429,14 @@ static void scene_size_note(__unsafe_unretained NvShader *fs) {   // the compose
     uint32_t ow = atomic_exchange(&g_scene_w, w), oh = atomic_exchange(&g_scene_h, h);
     if (ow != w || oh != h) MLOG("内部分辨率（合成采样的场景）：%ux%u", w, h);
 }
+#include "totk_finish.h"   // FXAA off and sharpening (the settings panel's effects page)
 static int mfxup_draw(NvProg *pr) {
     if (g_mfxup_src || g_mfxup_out) { g_mfxup_src = nil; g_mfxup_out = nil; } g_mfxup_sh = nil;   // TOTK: nil stores were two objc_release calls on every draw
     if (!pr) return 0;
     __unsafe_unretained NvShader *fs = pr->sh[1];
     if (!fs) return 0;
     scene_size_note(fs);
+    if (fin_draw(fs)) return 1;   // FXAA off: our pass writes its image before the reader (totk_finish.h)
     /* TOTK_TAA: the compose shader's scene goes through the MetalFX temporal scaler (1:1) first; encode_args binds the
        result, or the spatial upscale below takes it as its input when the scene is smaller than the canvas. The docked
        upscale (mfxup_dock) is a later draw of another shader and reads the composed picture: unaffected.

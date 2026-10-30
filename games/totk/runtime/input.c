@@ -274,6 +274,10 @@ static void *input_file(void *arg) {
             extern void runtime_far_scale_set(double k);
             char *end; double k = strtod(line + 9, &end); if (end == line + 9 || !(k >= 0.001 && k <= 100)) runtime_fail("farscale takes 0.001 to 100");
             runtime_far_scale_set(k);
+        } else if (!strncmp(line, "fovscale ", 9)) {   /* "fovscale <K>": the game camera's field of view x K, as the effects page */
+            extern void runtime_fov_scale_set(double k);
+            char *end; double k = strtod(line + 9, &end); if (end == line + 9 || !(k >= 0.5 && k <= 2)) runtime_fail("fovscale takes 0.5 to 2");
+            runtime_fov_scale_set(k);
         } else if (!strncmp(line, "frmwatch ", 9) || !strncmp(line, "frmwatchx ", 10)) {   /* "frmwatch[x] <seconds> [hex offset]": who reads a time value */
             extern void runtime_diag_frm_watch(double secs, unsigned off, int in_x);
             int in_x = line[8] == 'x'; double secs; unsigned off = 0x10;

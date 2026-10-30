@@ -35,6 +35,14 @@ void dm_gfx_ssao_set(int pct) { if (fakeSsaoLive) fakeSsaoSet = pct; }
 #endif
 static const char *const fakeFxIds[2] = {"ao", "bloom"}, *const fakeFxNames[2][2] = {{"环境光遮蔽", "Ambient occlusion"}, {"泛光", "Bloom"}};
 static int fakeFxOn[2] = {1, 1};
+static int fakeAnisoStart = -1, fakeFxaa = 1, fakeSharpen;
+void dm_gfx_aniso_start(int n) { fakeAnisoStart = n; }
+int dm_gfx_aniso_locked(void) { return 0; }
+int dm_gfx_aniso(void) { return 0; }   /* the game's 1x in force */
+void dm_gfx_fxaa_set(int on) { fakeFxaa = on; }
+int dm_gfx_fxaa_on(void) { return fakeFxaa; }
+void dm_gfx_sharpen_set(int pct) { fakeSharpen = pct; }
+int dm_gfx_sharpen(void) { return fakeSharpen; }
 int dm_gfx_fx_count(void) { return 2; }
 const char *dm_gfx_fx_id(int i) { return fakeFxIds[i]; }
 const char *dm_gfx_fx_name(int i, int english) { return fakeFxNames[i][english != 0]; }
@@ -279,8 +287,9 @@ int main(int argc, const char **argv) { @autoreleasepool {
     runtime_input_key_synthetic(18, 1); runtime_input_key_synthetic(18, 1); tick(); runtime_input_key_synthetic(18, 0); tick();
     assert(settingsOpen && fakeSettingsCapture && settingsPanel && !settingsPanel.hidden && settingsPanel.superview == window.contentView);
     assert(NSContainsRect(window.contentView.bounds, settingsPanel.frame));
-    assert(settingsPanel.allRows.count == 18 + TOTK_V143);   /* 15, then the effects page: two distances and two effect switches
-                                                                  (1.4.3), or three greyed rows */
+    assert(settingsPanel.allRows.count == 22 + TOTK_V143);   /* 16 (anisotropy last on the display page), then the effects page:
+                                                                 FOV, two distances, FXAA, sharpening and two effect
+                                                                 switches (1.4.3), or six greyed rows */
 
     /* FPS graph: a switch (here off at start; frontend.m turns it on when nothing is saved), kept in fps-graph.txt
        that both games share (user 2026-10-29). */
@@ -401,14 +410,27 @@ int main(int argc, const char **argv) { @autoreleasepool {
     shows(@"Model detail distance (LOD)", @"1x (as the game has it)"); shows(@"Render distance", @"100% (as the game has it)");
     pick(@"Model detail distance (LOD)", @"4×"); assert(runtime_lod_scale() == 4 && !strcmp(savedName, "graphics-lod.txt") && !strcmp(savedWord, "400"));
     pick(@"Render distance", @"25%"); assert(runtime_far_scale() == 0.25 && !strcmp(savedName, "graphics-far.txt") && !strcmp(savedWord, "25"));
+    pick(@"Model detail distance (LOD)", @"100×"); assert(runtime_lod_scale() == 100 && !strcmp(savedWord, "10000"));
+    pick(@"Render distance", @"0.1%"); assert(runtime_far_scale() == 0.001 && !strcmp(savedWord, "0.1"));
+    pick(@"Model detail distance (LOD)", @"Always the finest"); assert(runtime_lod_scale() >= 1e6 && !strcmp(savedWord, "max"));
+    shows(@"Field of view (FOV)", @"1x (as the game has it)");
+    pick(@"Field of view (FOV)", @"1.2×"); assert(runtime_fov_scale() == 1.2 && !strcmp(savedName, "graphics-fov.txt") && !strcmp(savedWord, "120"));
+    pick(@"Field of view (FOV)", @"1x (as the game has it)");
+    assert(switched(@"FXAA anti-aliasing")); flip(@"FXAA anti-aliasing", NO); assert(!fakeFxaa && !strcmp(savedName, "graphics-fxaa.txt") && !strcmp(savedWord, "off"));
+    flip(@"FXAA anti-aliasing", YES); assert(fakeFxaa && !strcmp(savedWord, "on"));
+    pick(@"Sharpening", @"50%"); assert(fakeSharpen == 50 && !strcmp(savedName, "graphics-sharpen.txt") && !strcmp(savedWord, "50"));
+    pick(@"Sharpening", @"Off (as the game has it)"); assert(!fakeSharpen);
     pick(@"Model detail distance (LOD)", @"1x (as the game has it)"); pick(@"Render distance", @"100% (as the game has it)"); assert(runtime_lod_scale() == 1 && runtime_far_scale() == 1);
     assert(switched(@"Bloom")); flip(@"Bloom", NO); assert(!fakeFxOn[1] && !strcmp(savedName, "graphics-effects.txt") && !strcmp(savedWord, "bloom"));
     flip(@"Ambient occlusion", NO); assert(!strcmp(savedWord, "ao bloom"));
     flip(@"Bloom", YES); flip(@"Ambient occlusion", YES); assert(fakeFxOn[0] && fakeFxOn[1] && !strcmp(savedWord, "none"));
 #else
     shows(@"Render distance", @"Not in this version"); assert(!menu(@"Render distance").enabled);
-    shows(@"Effect switches", @"Not in this version");
+    shows(@"Effect switches", @"Not in this version"); shows(@"Sharpening", @"Not in this version");
 #endif
+    /* Anisotropic filtering (display page, every version): kept for the next launch, which the title says once it differs. */
+    shows(@"Anisotropic filtering", @"Off (as the game has it)");
+    pick(@"Anisotropic filtering", @"16×"); assert(!strcmp(savedName, "graphics-aniso.txt") && !strcmp(savedWord, "16"));
     assert(!switched(@"Mouse")); flip(@"Mouse", YES); assert(fakeMouse && switched(@"Mouse")); flip(@"Mouse", NO); assert(!fakeMouse);
 
     /* The DualSense bow trigger: a switch; greyed out while TOTK_DUALSENSE_TRIGGERS or a test session decides, and on a
@@ -465,14 +487,14 @@ int main(int argc, const char **argv) { @autoreleasepool {
     /* Pages: Display, Input and Key bindings; the page shown last opens again. */
     press(18); assert(settingsOpen);
     [settingsPanel selectPage:SETTINGS_PAGE_DISPLAY];
-    assert(settingsPanel.rows.count == 8 && [settingsPanel.rows[0].title isEqualToString:@"Overlay"]);
+    assert(settingsPanel.rows.count == 9 && [settingsPanel.rows[0].title isEqualToString:@"Overlay"]);
     /* The display page's bottom right: contribute shaders and star the project, after the rows for a controller; the
        version stays clear of them; a result shows for a moment where the version is. */
     NSButton *contribute = settingsPanel.displayButtons[1], *starButton = settingsPanel.displayButtons[0];
     assert([contribute.title isEqualToString:@"Contribute shaders and pipelines"] && [starButton.title isEqualToString:@"⭐ Star the project"]);
     assert(!contribute.hidden && !starButton.hidden && NSMaxX(contribute.frame) < NSMinX(starButton.frame) && NSMaxX(starButton.frame) <= settingsPanel.frame.size.width - 14);
     assert(NSMaxX(settingsPanel.versionLabel.frame) <= NSMinX(contribute.frame) && contribute.frame.origin.y < 34 && starButton.frame.origin.y < 34);
-    assert(settingsPanel.controllerTargets.count == 10 && settingsPanel.controllerTargets[8] == contribute && settingsPanel.controllerTargets[9] == starButton);
+    assert(settingsPanel.controllerTargets.count == 11 && settingsPanel.controllerTargets[9] == contribute && settingsPanel.controllerTargets[10] == starButton);
     NSString *versionText = settingsPanel.versionLabel.stringValue;
     [settingsPanel note:@"Thank you!"]; assert([settingsPanel.versionLabel.stringValue isEqualToString:@"Thank you!"]);
     settingsPanel.versionLabel.stringValue = versionText; settingsPanel.versionLabel.frame = NSMakeRect(18, 9, 230, 16);

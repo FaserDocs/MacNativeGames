@@ -20,6 +20,8 @@
                                                              (runtime_front_resize_aspect; user 2026-10-25: no fitting the
                                                              window any more); TOTK_ASPECT's ratio is offered too
      edge smoothing       switch                             taa_set (gfx/nvn/totk_taa.m)
+     anisotropic filtering off / 2x / 4x / 8x / 16x          dm_gfx_aniso_start (gfx/nvn/nvn_mtl.m), graphics-aniso.txt; from
+                                                             the next launch (samplers are made once); TOTK_ANISO first
      ambient occlusion    off / 1.5x / 2x / 3x, default off  dm_gfx_ssao_* (gfx/nvn/totk_ssao.h, PR #1316), saved in ssao.txt
                                                              (off or the strength and radius in percent); Tears of the
                                                              Kingdom 1.4.3 and Breath of the Wild 1.9.0 only. Its shaders
@@ -43,12 +45,18 @@
                                                              out); a device the run started without comes at the next
                                                              launch (its title says so)
    Effects (Tears of the Kingdom 1.4.3; user 2026-10-30, after UltraCam's render distance and shader switches)
-     model detail distance 1x / 2x / 4x / 10x               runtime_lod_scale_set (game_patches_v143.c): the level of
+     model detail distance 1x / 2x / 4x / 10x / 20x / 50x / runtime_lod_scale_set (game_patches_v143.c): the level of
                                                              detail a model gets at a distance is the one it had at
-                                                             1/K of it; graphics-lod.txt (x100); TOTK_LOD_SCALE first
-     render distance      100% / 50% / 25% / 10%             runtime_far_scale_set: the camera's far plane (the game's
+     100x                                                    1/K of it; graphics-lod.txt (x100); TOTK_LOD_SCALE first
+     render distance      100% / 50% / 25% / 10% / 1% / 0.1% runtime_far_scale_set: the camera's far plane (the game's
                                                              25000 already spans the map, so only less is offered);
                                                              graphics-far.txt (percent); TOTK_FAR_SCALE first
+     field of view        0.8x .. 1.5x                       runtime_fov_scale_set: the game camera's vertical FOV
+                                                             (its zooms scale too); graphics-fov.txt (x100)
+     model detail distance also "always the finest" (graphics-lod.txt "max": the level a model has up close)
+     FXAA anti-aliasing   switch                             dm_gfx_fxaa_set (gfx/nvn/totk_finish.h); graphics-fxaa.txt
+     sharpening           off / 25% / 50% / 75% / 100%       dm_gfx_sharpen_set: FSR 1 RCAS on the 3D picture;
+                                                             graphics-sharpen.txt (percent)
      one switch per effect                                   dm_gfx_fx_set (gfx/nvn/totk_fx.h): its passes left out while
                                                              off; graphics-effects.txt lists the ones that are off
    Key bindings: one row per game action with two keyboard and mouse inputs (keyboard_map.h, runtime_keymap_set: in force
@@ -75,12 +83,15 @@
 
 void dm_gfx_set_flag(const char *name, int value);
 void dm_gfx_ssao_start(int pct); int dm_gfx_ssao_locked(void); int dm_gfx_ssao_live(void); void dm_gfx_ssao_set(int pct);   /* totk_ssao.h */
+void dm_gfx_aniso_start(int n); int dm_gfx_aniso_locked(void); int dm_gfx_aniso(void);   /* gfx/nvn/nvn_mtl.m */
 void nvn_fps_lock_set(int fps);   /* gfx/nvn/hle_nvn.c: the shared totk_fps_limits choices */
 #ifdef TOTK_GAME_V143   /* the effects page: its shader keys and patch sites are 1.4.3's */
 int dm_gfx_fx_count(void); const char *dm_gfx_fx_id(int i); const char *dm_gfx_fx_name(int i, int english);   /* totk_fx.h */
 int dm_gfx_fx_available(int i); int dm_gfx_fx_on(int i); void dm_gfx_fx_set(int i, int on);
 double runtime_lod_scale(void); void runtime_lod_scale_set(double k); int runtime_lod_scale_locked(void);   /* game_patches_v143.c */
 double runtime_far_scale(void); void runtime_far_scale_set(double k); int runtime_far_scale_locked(void);
+double runtime_fov_scale(void); void runtime_fov_scale_set(double k); int runtime_fov_scale_locked(void); int runtime_fov_available(void);
+void dm_gfx_fxaa_set(int on); int dm_gfx_fxaa_on(void); void dm_gfx_sharpen_set(int pct); int dm_gfx_sharpen(void);   /* gfx/nvn/totk_finish.h */
 #endif
 int nvn_fps_lock(void);
 
@@ -131,6 +142,7 @@ static void settings_save_frame(void) {
 #define SETTINGS_SSAO 1
 #endif
 static int settingsSsao;   /* the saved choice: 0 off, else percent */
+static int settingsAniso=-1;   /* anisotropic filtering: the saved pick, -1 = none saved */
 static void settings_ssao_restore(void) {
  char word[32];if(!runtime_setting_word("ssao.txt",word,sizeof word))return;
  const char *w;size_t n=feedback_word(word,&w);char *end;long pct=strtol(w,&end,10);
@@ -141,8 +153,15 @@ static void settings_ssao_restore(void) {
 #endif
 }
 /* The effects page: graphics-effects.txt holds the ids of the effects that are off, one word each ("none" when all are
-   on); graphics-lod.txt the model detail distance x100, graphics-far.txt the render distance in percent. */
+   on); graphics-lod.txt the model detail distance x100, graphics-far.txt the render distance in percent (0.1 to 100). */
 #ifdef TOTK_GAME_V143
+/* "Always the finest": a factor no distance in the map reaches, so a model keeps the level it has up close. */
+#define SETTINGS_LOD_MAX 1e6
+static int settings_read_number(const char *name, double lo, double hi, double *value) {
+ char word[32],*end;if(!runtime_setting_word(name,word,sizeof word))return 0;
+ double d=strtod(word,&end);while(*end==' '||*end=='\n'||*end=='\r'||*end=='\t')end++;
+ if(end==word||*end||!(d>=lo&&d<=hi))return 0;*value=d;return 1;
+}
 static void settings_effects_save(void) {
  char line[512]="";size_t n=0;
  for(int i=0;i<dm_gfx_fx_count();i++)if(!dm_gfx_fx_on(i))n+=(size_t)snprintf(line+n,sizeof line-n,"%s%s",n?" ":"",dm_gfx_fx_id(i));
@@ -153,9 +172,13 @@ static void settings_effects_restore(void) {
  if(runtime_setting_word("graphics-effects.txt",line,sizeof line))
   for(char *w=strtok(line," \t\r\n");w;w=strtok(NULL," \t\r\n"))
    for(int i=0;i<dm_gfx_fx_count();i++)if(!strcmp(w,dm_gfx_fx_id(i)))dm_gfx_fx_set(i,0);
- int v;
- if(!runtime_lod_scale_locked()&&settings_read_int("graphics-lod.txt",&v)&&v>=100&&v<=1000)runtime_lod_scale_set(v/100.0);
- if(!runtime_far_scale_locked()&&settings_read_int("graphics-far.txt",&v)&&v>=10&&v<=100)runtime_far_scale_set(v/100.0);
+ double d;char word[16];
+ if(!runtime_lod_scale_locked()&&runtime_setting_word("graphics-lod.txt",word,sizeof word)&&!strncmp(word,"max",3))runtime_lod_scale_set(SETTINGS_LOD_MAX);
+ else if(!runtime_lod_scale_locked()&&settings_read_number("graphics-lod.txt",100,10000,&d))runtime_lod_scale_set(d/100);
+ if(!runtime_fov_scale_locked()&&settings_read_number("graphics-fov.txt",50,200,&d))runtime_fov_scale_set(d/100);
+ if(runtime_setting_word("graphics-fxaa.txt",word,sizeof word)&&!strncmp(word,"off",3))dm_gfx_fxaa_set(0);
+ if(settings_read_number("graphics-sharpen.txt",0,100,&d))dm_gfx_sharpen_set((int)d);
+ if(!runtime_far_scale_locked()&&settings_read_number("graphics-far.txt",0.1,100,&d))runtime_far_scale_set(d/100);
 }
 #else
 static void settings_effects_restore(void) {}
@@ -171,6 +194,7 @@ static void settings_restore_begin(void) {
  }
  if(!getenv("TOTK_TAA")&&settings_read_int("graphics-taa.txt",&v)&&(v==0||v==1))taa_set(v);
  settings_ssao_restore();
+ if(!dm_gfx_aniso_locked()&&settings_read_int("graphics-aniso.txt",&v)&&v<=16){settingsAniso=v;dm_gfx_aniso_start(v);}
  settings_effects_restore();
  const char *output=getenv("TOTK_OUTPUT_RES");
  if((!output||!*output||!strcmp(output,"auto"))&&!getenv("TOTK_MFX_OUTPUT")&&!getenv("TOTK_MFX_UPSCALE")&&
@@ -321,20 +345,42 @@ static TOTKSettingRow *settings_ssao_row(void) {
 #ifdef TOTK_GAME_V143
 static TOTKSettingRow *settings_distance_row(int lod) {
  NSString *t=lod?settings_text("模型细节距离（LOD）","Model detail distance (LOD)"):settings_text("渲染距离","Render distance");
- int now=(int)lround((lod?runtime_lod_scale():runtime_far_scale())*100);
+ /* the row's values: the factor x100 for the detail distance, x1000 for the render distance (0.1% = 1) */
+ double unit=lod?100:1000;
+ int (^current)(void)=^int{double k=lod?runtime_lod_scale():runtime_far_scale();return lod&&k>=SETTINGS_LOD_MAX?-1:(int)lround(k*unit);};
+ int now=current();
  NSString *(^text)(int)=^NSString *(int v){
-  if(v==100)return lod?settings_text("1×（游戏原样）","1x (as the game has it)"):settings_text("100%（游戏原样）","100% (as the game has it)");
-  return lod?[NSString stringWithFormat:@"%g×",v/100.0]:[NSString stringWithFormat:@"%d%%",v];};
+  if(v<0)return settings_text("始终最高精度","Always the finest");
+  if(v==unit)return lod?settings_text("1×（游戏原样）","1x (as the game has it)"):settings_text("100%（游戏原样）","100% (as the game has it)");
+  return lod?[NSString stringWithFormat:@"%g×",v/100.0]:[NSString stringWithFormat:@"%g%%",v/10.0];};
  if(lod?runtime_lod_scale_locked():runtime_far_scale_locked())return settings_fixed(t,text(now));
- NSMutableArray<NSNumber *> *values=[(lod?@[@100,@200,@400,@1000]:@[@100,@50,@25,@10]) mutableCopy];
+ NSMutableArray<NSNumber *> *values=[(lod?@[@100,@200,@400,@1000,@2000,@5000,@10000,@-1]:@[@1000,@500,@250,@100,@10,@1]) mutableCopy];
  if(![values containsObject:@(now)])[values addObject:@(now)];
  NSMutableArray<NSString *> *choices=[NSMutableArray array];for(NSNumber *v in values)[choices addObject:text(v.intValue)];
- return settings_row(t,choices,values,^int{return (int)lround((lod?runtime_lod_scale():runtime_far_scale())*100);},^(int v){
-  if(lod){runtime_lod_scale_set(v/100.0);settings_save_int("graphics-lod.txt",v,"model detail distance");}
-  else{runtime_far_scale_set(v/100.0);settings_save_int("graphics-far.txt",v,"render distance");}});
+ return settings_row(t,choices,values,current,^(int v){
+  if(lod&&v<0){runtime_lod_scale_set(SETTINGS_LOD_MAX);runtime_setting_save("graphics-lod.txt","max","model detail distance");}
+  else if(lod){runtime_lod_scale_set(v/100.0);settings_save_int("graphics-lod.txt",v,"model detail distance");}
+  else{char word[16];snprintf(word,sizeof word,"%g",v/10.0);runtime_far_scale_set(v/1000.0);runtime_setting_save("graphics-far.txt",word,"render distance");}});
+}
+/* The game camera's field of view, in hundredths of the game's own (its zooms scale with it). */
+static TOTKSettingRow *settings_fov_row(void) {
+ NSString *t=settings_text("视野（FOV）","Field of view (FOV)");
+ NSString *(^text)(int)=^NSString *(int v){return v==100?settings_text("1×（游戏原样）","1x (as the game has it)"):[NSString stringWithFormat:@"%g×",v/100.0];};
+ int now=(int)lround(runtime_fov_scale()*100);
+ if(runtime_fov_scale_locked())return settings_fixed(t,text(now));
+ if(!runtime_fov_available())return settings_fixed(t,settings_text("游戏原样（Vert+ 开着）","As the game has it (Vert+ is on)"));
+ NSMutableArray<NSNumber *> *values=[@[@80,@90,@100,@110,@120,@130,@140,@150] mutableCopy];
+ if(![values containsObject:@(now)])[values addObject:@(now)];
+ NSMutableArray<NSString *> *choices=[NSMutableArray array];for(NSNumber *v in values)[choices addObject:text(v.intValue)];
+ return settings_row(t,choices,values,^int{return (int)lround(runtime_fov_scale()*100);},^(int v){runtime_fov_scale_set(v/100.0);settings_save_int("graphics-fov.txt",v,"field of view");});
 }
 static NSArray<TOTKSettingRow *> *settings_effect_rows(void) {
- NSMutableArray<TOTKSettingRow *> *rows=[NSMutableArray arrayWithObjects:settings_distance_row(1),settings_distance_row(0),nil];
+ NSMutableArray<TOTKSettingRow *> *rows=[NSMutableArray arrayWithObjects:settings_fov_row(),settings_distance_row(1),settings_distance_row(0),nil];
+ /* FXAA (the game's edge smoothing of the 3D picture) and sharpening (FSR 1 RCAS on the 3D picture, not the UI) */
+ [rows addObject:settings_row(settings_text("FXAA 抗锯齿","FXAA anti-aliasing"),nil,nil,^int{return dm_gfx_fxaa_on();},^(int v){
+  dm_gfx_fxaa_set(v);runtime_setting_save("graphics-fxaa.txt",v?"on":"off","FXAA");})];
+ [rows addObject:settings_row(settings_text("锐化","Sharpening"),@[settings_text("关（游戏原样）","Off (as the game has it)"),@"25%",@"50%",@"75%",@"100%"],@[@0,@25,@50,@75,@100],
+  ^int{return dm_gfx_sharpen();},^(int v){dm_gfx_sharpen_set(v);settings_save_int("graphics-sharpen.txt",v,"sharpening");})];
  for(int i=0;i<dm_gfx_fx_count();i++){
   NSString *t=@(TOTK_UI(dm_gfx_fx_name(i,0),dm_gfx_fx_name(i,1)));
   if(!dm_gfx_fx_available(i)){[rows addObject:settings_fixed(t,settings_text("这个版本没有","Not in this version"))];continue;}
@@ -345,10 +391,23 @@ static NSArray<TOTKSettingRow *> *settings_effect_rows(void) {
 #else
 static NSArray<TOTKSettingRow *> *settings_effect_rows(void) {   /* other versions: the page says so */
  NSString *none=settings_text("这个版本没有","Not in this version");
- return @[settings_fixed(settings_text("模型细节距离（LOD）","Model detail distance (LOD)"),none),settings_fixed(settings_text("渲染距离","Render distance"),none),
+ return @[settings_fixed(settings_text("视野（FOV）","Field of view (FOV)"),none),settings_fixed(settings_text("FXAA 抗锯齿","FXAA anti-aliasing"),none),settings_fixed(settings_text("锐化","Sharpening"),none),settings_fixed(settings_text("模型细节距离（LOD）","Model detail distance (LOD)"),none),settings_fixed(settings_text("渲染距离","Render distance"),none),
           settings_fixed(settings_text("效果开关","Effect switches"),none)];
 }
 #endif
+/* Anisotropic filtering: off (the game's 1x) to 16x for the material textures; the samplers are made once, so a pick is
+   kept for the next launch (the title says so while it differs from the level in force). */
+static TOTKSettingRow *settings_aniso_row(void) {
+ NSString *t=settings_text("各向异性过滤","Anisotropic filtering");
+ NSString *(^text)(int)=^NSString *(int v){return v<=1?settings_text("关（游戏原样）","Off (as the game has it)"):[NSString stringWithFormat:@"%d×",v];};
+ int now=dm_gfx_aniso()<=1?0:dm_gfx_aniso();
+ if(dm_gfx_aniso_locked())return settings_fixed(t,text(now));
+ int want=settingsAniso<0?now:settingsAniso;
+ if(want!=now)t=[t stringByAppendingString:settings_text("（下次启动生效）"," (from the next launch)")];
+ return settings_row(t,@[text(0),text(2),text(4),text(8),text(16)],@[@0,@2,@4,@8,@16],^int{return settingsAniso<0?now:settingsAniso;},^(int v){
+  settingsAniso=v;settings_save_int("graphics-aniso.txt",v,"anisotropic filtering");
+  dispatch_async(dispatch_get_main_queue(),^{settings_rebuild();});});   /* the title says whether it waits for the next launch */
+}
 static NSArray<TOTKSettingRow *> *settings_rows(void) {
  NSMutableArray<TOTKSettingRow *> *rows=[NSMutableArray array];
  /* Display */
@@ -401,6 +460,7 @@ static NSArray<TOTKSettingRow *> *settings_rows(void) {
  [rows addObject:settings_row(settings_text("边缘平滑（MetalFX 时间性）","Edge smoothing (MetalFX Temporal)"),nil,nil,
   ^int{return taa_enabled();},^(int v){taa_set(v);settings_save_int("graphics-taa.txt",v,"edge smoothing");})];
  [rows addObject:settings_ssao_row()];
+ [rows addObject:settings_aniso_row()];
  NSUInteger display=rows.count;
  /* Input */
  TOTKSettingRow *pad=settings_row(settings_text("手柄类型","Controller type"),@[settings_pad_auto_text(),@"Xbox",@"PlayStation",@"Switch"],

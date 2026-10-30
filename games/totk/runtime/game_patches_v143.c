@@ -410,6 +410,55 @@ static void patch_far_distance(Module *m){
     fprintf(stderr,"[totk] 1.4.3 render distance x%g (camera far plane), stub +%#llx\n",k,(unsigned long long)stub);
 #endif
 }
+/* Field of view (Mac, the settings panel's effects page or TOTK_FOV_SCALE=<K>, 2026-10-30): the same camera update loads the
+   controller's vertical FOV (+0x13c, radians) at main+0x628c3c, stores it at the projection's +0xa0 and derives the sine,
+   cosine and tangent of half of it (sead's setFovy, inlined). The load branches to a stub that keeps the game's value
+   (+0x194, for the log) and multiplies it by the factor at +0x190, so every value sead derives agrees (aspect_math.h:
+   widening only the tangent left the lighting wrong). The game's own zooms (bow, scope) scale with it. x8 and s2 are free
+   there as at the far load; s1 holds the 0.5 the next instruction uses. Vert+ (TOTK_ASPECT_VERT=1) takes that load
+   first; the FOV then stays the game's. The event camera setup (main+0xb43420..) keeps its own. */
+#define FOV_DATA_SLOT 0x190u
+#if !TARGET_OS_IPHONE
+static _Atomic uint32_t *fov_factor;
+static double fov_k=1;
+static int fov_taken;   /* Vert+ holds the FOV load: the FOV stays the game's */
+#endif
+static void patch_fov(Module *m){
+#if TARGET_OS_IPHONE
+    (void)m;
+#else
+    double k=env_factor("TOTK_FOV_SCALE",0.5);if(k)fov_k=k;else k=fov_k;
+    if(k>2)runtime_fail("TOTK_FOV_SCALE takes 0.5 to 2");
+    uint64_t data=(m->file_size+0x3fff)&~0x3fffULL,stub=((m->file_size+15)&~15ULL)+128+12*5*4+24;   /* after the far stub */
+    if(stub+24>data||data+FOV_DATA_SLOT+8>m->size)runtime_fail("1.4.3 field of view layout");
+    for(unsigned i=0;i<24;i++)if(m->base[stub+i])runtime_fail("1.4.3 field of view padding not empty");
+    uint32_t w;memcpy(&w,m->base+0x628c3c,4);
+    if(w!=0xbd413e60){fov_taken=1;fprintf(stderr,"[totk] 1.4.3 field of view: the FOV load is taken (Vert+, TOTK_ASPECT_VERT=1); the game's FOV\n");return;}
+    static const Patch guards[]={{0x628c40,0x1e210808,0},{0x628c44,0xbd00a280,0},{0x628c6c,0x91051268,0}};
+    for(unsigned i=0;i<3;i++){memcpy(&w,m->base+guards[i].off,4);if(w!=guards[i].original)runtime_fail("1.4.3 field of view: the camera code does not match");}
+    uint32_t words[6]={
+        0xbd413e60,                                              /* ldr s0, [x19, #0x13c]: the game's vertical FOV */
+        adrp(8,(uintptr_t)m->base+stub+4,(uintptr_t)m->base+data),
+        0xbd000100|(((FOV_DATA_SLOT+4)/4)<<10),                  /* str s0, [x8, #+0x194] */
+        0xbd400102|((FOV_DATA_SLOT/4)<<10),                      /* ldr s2, [x8, #+0x190] */
+        0x1e220800,                                              /* fmul s0, s0, s2 */
+        branch(stub+20,0x628c40)};
+    memcpy(m->base+stub,words,sizeof words);
+    fov_factor=(_Atomic uint32_t *)(void *)(m->base+data+FOV_DATA_SLOT);factor_store(fov_factor,k);
+    uint32_t j=branch(0x628c3c,stub);memcpy(m->base+0x628c3c,&j,4);
+    fprintf(stderr,"[totk] 1.4.3 field of view x%g (the game camera's vertical FOV), stub +%#llx\n",k,(unsigned long long)stub);
+#endif
+}
+#if !TARGET_OS_IPHONE
+void runtime_fov_scale_set(double k){
+    fov_k=k;if(fov_factor)factor_store(fov_factor,k);
+    float g=fov_factor?((const volatile float *)fov_factor)[1]:0;
+    fprintf(stderr,"[totk] fovscale: field of view x%g (the game's vertical FOV now %.1f degrees)\n",k,g*57.29578f);
+}
+double runtime_fov_scale(void){return fov_k;}
+int runtime_fov_scale_locked(void){const char *e=getenv("TOTK_FOV_SCALE");return e&&*e;}
+int runtime_fov_available(void){return !fov_taken;}
+#endif
 #if !TARGET_OS_IPHONE
 /* The settings panel and the input file's "farscale" / "lodscale": in force at once, or from the patch's installation. */
 void runtime_far_scale_set(double k){
@@ -508,6 +557,7 @@ void runtime_game_patches(Module *m) {
     patch_bench_cam(m);
     patch_lod_distance(m);
     patch_far_distance(m);
+    patch_fov(m);   /* after aspect_install: Vert+ may hold the same load */
     const char *enabled = getenv("TOTK_FPS60");
     if (enabled && !strcmp(enabled, "0")) {
         fprintf(stderr, "[totk] 1.4.3 shipping frame controller (TOTK_FPS60=0)\n");
