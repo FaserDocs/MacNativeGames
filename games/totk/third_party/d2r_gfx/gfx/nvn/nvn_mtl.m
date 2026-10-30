@@ -12636,7 +12636,7 @@ static void draw_inner(const p_draw *dw, const p_draw_idx *di) {
     { uint64_t skip = atomic_load(&g_diag_skip_fs);
       if (skip && pr->sh[1] && !g_defer_replaying) { char prefix[17]; snprintf(prefix, sizeof prefix, "%016llx", (unsigned long long)skip);
           if (!strncmp(pr->sh[1]->key, prefix, 16)) return; }
-      if (!g_defer_replaying && fx_drop(pr->sh[1], 1)) return;   // an effect switched off (totk_fx.h)
+      if (!g_defer_replaying && fx_drop(pr->sh[1], 1, pr->sh[0])) return;   // an effect switched off (totk_fx.h)
       static char sk[16][20]; static int nsk = -1;
       if (nsk < 0) { nsk = 0; for (const char *q = getenv("DM_NVN_SKIP_FS"); q && *q && nsk < 16; q = strchr(q, ',') ? strchr(q, ',') + 1 : q + strlen(q)) { size_t n = strcspn(q, ","); if (n > 16) n = 16; memcpy(sk[nsk], q, n); sk[nsk++][n] = 0; }
                      if (nsk) MLOG("DM_NVN_SKIP_FS：丢弃 %d 个片元着色器的绘制（诊断，画面不对）", nsk); }
@@ -13225,7 +13225,7 @@ static void dispatch(const p_dispatch *dp) {
     if (!cs) { RED_ONCE(28, "派发的程序没有计算着色器（或未映射）"); return; }
     { uint64_t skip = atomic_load(&g_diag_skip_cs);   // diagnostic "flag skipcs_<key> 1"
       if (skip && !g_defer_replaying) { char prefix[17]; snprintf(prefix, sizeof prefix, "%016llx", (unsigned long long)skip); if (!strncmp(cs->key, prefix, 16)) return; }
-      if (!g_defer_replaying && fx_drop(cs, 5)) return; }   // an effect switched off (totk_fx.h)
+      if (!g_defer_replaying && fx_drop(cs, 5, nil)) return; }   // an effect switched off (totk_fx.h)
     const void *k = (__bridge const void *)cs;
     id<MTLComputePipelineState> ps = hm_get_id(&g_cps, &k);
     if (!ps) {

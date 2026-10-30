@@ -39,8 +39,8 @@ static int ssao_param(int i) {   // the environment value goes in only while the
                  int was = -1; if (!atomic_compare_exchange_strong(&g_ssao_v[i], &was, v)) v = was; }
     return v;
 }
-static _Atomic int g_ssao_off;   // the effect switch (totk_fx.h): w = 1, no ambient occlusion at all (TOTK)
-static void ssao_values(float p[4]) { p[0] = ssao_param(0) / 100.0f; p[1] = ssao_param(1) / 100.0f; p[2] = (float)ssao_param(2); p[3] = atomic_load(&g_ssao_off) ? 1.0f : 0.0f; }
+static _Atomic int g_ssao_off;   // the effect switches (totk_fx.h, TOTK) as w: bit 0 no ambient occlusion, bit 1 no shadows
+static void ssao_values(float p[4]) { p[0] = ssao_param(0) / 100.0f; p[1] = ssao_param(1) / 100.0f; p[2] = (float)ssao_param(2); p[3] = (float)atomic_load(&g_ssao_off); }
 #define SSAO_MARK "// totk-ssao\n"   // first line of a patched source and of every variant made from it (variant_library)
 
 /* TOTK_SSAO: the patched shaders (weak: a library the prediction cache drops goes away). Own lock: g_shcache is the submit
@@ -83,8 +83,13 @@ static int ssao_flag(const char *name, int v) {
 void dm_gfx_ssao_start(int pct) { atomic_store(&g_ssao_saved, pct > 0 ? pct : 0); }
 int dm_gfx_ssao_locked(void) { return getenv("TOTK_SSAO") || getenv("TOTK_SSAO_STRENGTH") || getenv("TOTK_SSAO_RADIUS"); }
 int dm_gfx_ssao_live(void) { return ssao_on(); }
-/* The effect switch (totk_fx.h, TOTK): 1 turns the AO off in every patched shader at once, 0 back to the level above. */
-static void ssao_set_off(int off) { atomic_store(&g_ssao_off, off != 0); if (ssao_on()) ssao_write_all(); }
+/* The effect switches (totk_fx.h, TOTK): the AO (bit 0) or the sun's shadows (bit 1) off in every patched shader at once. */
+static void ssao_set_off_bit(int bit, int off) {
+    if (off) atomic_fetch_or(&g_ssao_off, bit); else atomic_fetch_and(&g_ssao_off, ~bit);
+    if (ssao_on()) ssao_write_all();
+}
+static void ssao_set_off(int off) { ssao_set_off_bit(1, off); }
+static void ssao_set_shadow_off(int off) { ssao_set_off_bit(2, off); }
 void dm_gfx_ssao_set(int pct) {
     if (!ssao_on()) return;
     ssao_flag("ssao_strength_pct", pct); ssao_flag("ssao_radius_pct", pct);
@@ -102,8 +107,8 @@ static const char k_ssao_helper_totk[] =
     "// per tap clamp((n.v - 0.03) / (v.v + 1e-4)), occlusion = clamp(sum * 2/N) with N = 8 (the stock \"* 0.25\"), AO = 1 - occlusion.\n"
     "// p = this shader's own c1[48]: x strength (multiplier on the occlusion term, <= 0 -> 1, at most 8), y radius scale\n"
     "// (<= 0 -> 1, else 0.25 .. 4),\n"
-    "// z extra +/- tap pairs on the perpendicular axis (0..8, rounded), w 1 = no AO (the effect switch). p == 0 returns the\n"
-    "// stock value untouched.\n"
+    "// z extra +/- tap pairs on the perpendicular axis (0..8, rounded), w the effect switches (bit 0 no AO here; bit 1 no\n"
+    "// shadows, at the shadow store). p.xyz == 0 returns the stock value untouched.\n"
     "static inline float totk_ssao_tap(float2 uv, float2 dir, float d, float2 fr, float3 pc, float3 nrm,\n"
     "                                  float zs, float zb, texture2d<float> tex, sampler smp)\n"
     "{\n"
@@ -122,9 +127,9 @@ static const char k_ssao_helper_totk[] =
     "                                 float3 nrm, float zs, float zb, constant float4* c1, texture2d<float> tex, sampler smp)\n"
     "{\n"
     "    p = select(p, float4(0.0), isnan(p));                 // a NaN parameter counts as 0\n"
-    "    if (p.w > 0.5)\n"
+    "    if (fmod(p.w, 2.0) >= 0.5)\n"
     "        return 1.0;                                        // the effect switch: nothing occluded\n"
-    "    if (all(p == float4(0.0)))\n"
+    "    if (all(p.xyz == float3(0.0)))\n"
     "        return stock_ao;                                   // all zero: the stock value, bit for bit\n"
     "    const float s = p.x > 0.0 ? min(p.x, 8.0) : 1.0;\n"
     "    const float r = p.y > 0.0 ? clamp(p.y, 0.25, 4.0) : 1.0;\n"
@@ -242,16 +247,20 @@ static const char k_ssao_helper_botw[] =
     "    }\n"
     "    return -occ + 1.0;\n"
     "}\n";
-static const struct { const char *prefix; int slot; const char *helper, *store, *call; } k_ssao_keys[] = {
+/* shadow_store / shadow_call (TOTK): the sun's shadow term, the colour target's .x (traced to the five shadow-map
+   sample_compare taps of fp_t_tcb_14, 2026-10-30; its own default is 1.0, lit): 1.0 while the shadows switch is off. */
+static const struct { const char *prefix; int slot; const char *helper, *store, *call, *shadow_store, *shadow_call; } k_ssao_keys[] = {
     {"9a5e3335514e4cbb", 48, k_ssao_helper_totk,
      "_455 = as_type<int>(_2366);",
-     "_455 = as_type<int>(totk_ssao_ao(_2366, _2358, (*spvDescriptorSet0.fp_c1)._m0[48], float2(_1870, _88), float2(_1874, _1872), float2(_1900, _1902), float3(_252, _248, _232), float3(_439, _427, _431), (*spvDescriptorSet0.fp_c4)._m0[16].x, (*spvDescriptorSet0.fp_c4)._m0[14].x, (*spvDescriptorSet0.fp_c1)._m0, spvDescriptorSet0.fp_t_tcb_A, spvDescriptorSet0.fp_t_tcb_ASmplr));"},
+     "_455 = as_type<int>(totk_ssao_ao(_2366, _2358, (*spvDescriptorSet0.fp_c1)._m0[48], float2(_1870, _88), float2(_1874, _1872), float2(_1900, _1902), float3(_252, _248, _232), float3(_439, _427, _431), (*spvDescriptorSet0.fp_c4)._m0[16].x, (*spvDescriptorSet0.fp_c4)._m0[14].x, (*spvDescriptorSet0.fp_c1)._m0, spvDescriptorSet0.fp_t_tcb_A, spvDescriptorSet0.fp_t_tcb_ASmplr));",
+     "out.m_71.x = as_type<float>(_2598);", "out.m_71.x = (*spvDescriptorSet0.fp_c1)._m0[48].w >= 1.5 ? 1.0 : as_type<float>(_2598);"},
     {"abbbf48f9b5e6598", 48, k_ssao_helper_totk,
      "_461 = as_type<int>(_2370);",
-     "_461 = as_type<int>(totk_ssao_ao(_2370, _2362, (*spvDescriptorSet0.fp_c1)._m0[48], float2(_1874, _92), float2(_1878, _1876), float2(_1904, _1908), float3(_252, _244, _228), float3(_433, _437, _441), (*spvDescriptorSet0.fp_c4)._m0[16].x, (*spvDescriptorSet0.fp_c4)._m0[14].x, (*spvDescriptorSet0.fp_c1)._m0, spvDescriptorSet0.fp_t_tcb_A, spvDescriptorSet0.fp_t_tcb_ASmplr));"},
+     "_461 = as_type<int>(totk_ssao_ao(_2370, _2362, (*spvDescriptorSet0.fp_c1)._m0[48], float2(_1874, _92), float2(_1878, _1876), float2(_1904, _1908), float3(_252, _244, _228), float3(_433, _437, _441), (*spvDescriptorSet0.fp_c4)._m0[16].x, (*spvDescriptorSet0.fp_c4)._m0[14].x, (*spvDescriptorSet0.fp_c1)._m0, spvDescriptorSet0.fp_t_tcb_A, spvDescriptorSet0.fp_t_tcb_ASmplr));",
+     "out.m_73.x = as_type<float>(_2764);", "out.m_73.x = (*spvDescriptorSet0.fp_c1)._m0[48].w >= 1.5 ? 1.0 : as_type<float>(_2764);"},
     {"0eeb23f2b287a638", 3, k_ssao_helper_botw,
      "_302 = as_type<int>(_1051);",
-     "_302 = as_type<int>(totk_ssao_botw(_1051, (*spvDescriptorSet0.fp_c1)._m0[3], (*spvDescriptorSet0.fp_c1)._m0[0], (*spvDescriptorSet0.fp_c1)._m0[1], (*spvDescriptorSet0.fp_c1)._m0[2], (*spvDescriptorSet0.fp_c3)._m0[16].x, spvDescriptorSet0.fp_t_tcb_20, spvDescriptorSet0.fp_t_tcb_20Smplr, _853, _851, _847, _849, _839, _78, _891, _893, _905, _909));"},
+     "_302 = as_type<int>(totk_ssao_botw(_1051, (*spvDescriptorSet0.fp_c1)._m0[3], (*spvDescriptorSet0.fp_c1)._m0[0], (*spvDescriptorSet0.fp_c1)._m0[1], (*spvDescriptorSet0.fp_c1)._m0[2], (*spvDescriptorSet0.fp_c3)._m0[16].x, spvDescriptorSet0.fp_t_tcb_20, spvDescriptorSet0.fp_t_tcb_20Smplr, _853, _851, _847, _849, _839, _78, _891, _893, _905, _909));", NULL, NULL},
 };
 static int ssao_entry(const char *key) {
     for (int i = 0; i < (int)(sizeof k_ssao_keys / sizeof *k_ssao_keys); i++) if (!strncmp(key, k_ssao_keys[i].prefix, 16)) return i;
@@ -264,12 +273,15 @@ static NSString *ssao_patch_src(NvShader *o, NSString *src, int i, const char **
     NSString *entry = @"fragment main0_out main0(", *store = @(k_ssao_keys[i].store);
     if ([src componentsSeparatedByString:entry].count != 2) { *why = "the fragment entry is not there exactly once"; return nil; }
     if ([src componentsSeparatedByString:store].count != 2) { *why = "the AO store line is not there exactly once"; return nil; }
+    NSString *sstore = k_ssao_keys[i].shadow_store ? @(k_ssao_keys[i].shadow_store) : nil;
+    if (sstore && [src componentsSeparatedByString:sstore].count != 2) { *why = "the shadow store line is not there exactly once"; return nil; }
     /* Chain v8 (upstream ae8f4f4) puts [[ early_fragment_tests ]] before the entry of flagged shaders, the AO ones among
        them: the helpers go before the attribute, which would otherwise apply to the first helper (a compile error). */
     NSString *efe = [@"[[ early_fragment_tests ]] " stringByAppendingString:entry];
     NSString *at = [src rangeOfString:efe].location != NSNotFound ? efe : entry;
     NSString *out = [src stringByReplacingOccurrencesOfString:at withString:[NSString stringWithFormat:@"%s\n%@", k_ssao_keys[i].helper, at]];
     out = [out stringByReplacingOccurrencesOfString:store withString:@(k_ssao_keys[i].call)];
+    if (sstore) out = [out stringByReplacingOccurrencesOfString:sstore withString:@(k_ssao_keys[i].shadow_call)];
     return [@SSAO_MARK stringByAppendingString:out];
 }
 

@@ -289,7 +289,7 @@ int main(int argc, const char **argv) { @autoreleasepool {
     runtime_input_key_synthetic(18, 1); runtime_input_key_synthetic(18, 1); tick(); runtime_input_key_synthetic(18, 0); tick();
     assert(settingsOpen && fakeSettingsCapture && settingsPanel && !settingsPanel.hidden && settingsPanel.superview == window.contentView);
     assert(NSContainsRect(window.contentView.bounds, settingsPanel.frame));
-    assert(settingsPanel.allRows.count == 22 + TOTK_V143);   /* 16 (anisotropy last on the display page), then the effects page:
+    assert(settingsPanel.allRows.count == 22 + 2 * TOTK_V143);   /* 16 (anisotropy last on the display page), then the effects page:
                                                                  FOV, two distances, FXAA, sharpening and two effect
                                                                  switches (1.4.3), or six greyed rows */
 
@@ -415,6 +415,9 @@ int main(int argc, const char **argv) { @autoreleasepool {
     pick(@"Model detail distance (LOD)", @"100×"); assert(runtime_lod_scale() == 100 && !strcmp(savedWord, "10000"));
     pick(@"Render distance", @"10×"); assert(runtime_far_scale() == 10 && !strcmp(savedWord, "1000"));
     pick(@"Model detail distance (LOD)", @"Always the finest"); assert(runtime_lod_scale() >= 1e6 && !strcmp(savedWord, "max"));
+    shows(@"Shadow resolution", @"1x (as the game has it, 800)");
+    pick(@"Shadow resolution", @"2×（1600）"); assert(runtime_shadow_scale() == 2 && !strcmp(savedName, "graphics-effects.txt"));
+    pick(@"Shadow resolution", @"1x (as the game has it, 800)"); assert(runtime_shadow_scale() == 1);
     shows(@"Field of view (FOV)", @"1x (as the game has it)");
     pick(@"Field of view (FOV)", @"1.2×"); assert(runtime_fov_scale() == 1.2 && !strcmp(savedName, "graphics-fov.txt") && !strcmp(savedWord, "120"));
     pick(@"Field of view (FOV)", @"1x (as the game has it)");
@@ -430,7 +433,7 @@ int main(int argc, const char **argv) { @autoreleasepool {
     assert(!resetEffects.hidden && [resetEffects.title isEqualToString:@"Reset to defaults"] && [settingsPanel.controllerTargets containsObject:resetEffects]);
     [resetEffects performClick:nil]; tick();
     assert(runtime_fov_scale() == 1 && runtime_lod_scale() == 1 && runtime_far_scale() == 1 && fakeFxaa && !fakeSharpen && fakeFxOn[0] && fakeFxOn[1] && !fakeAniso);
-    assert(!strcmp(removedName, "graphics-effects.txt") && settingsPanel.page == SETTINGS_PAGE_EFFECTS);
+    assert(!strcmp(removedName, "graphics-shadow.txt") && settingsPanel.page == SETTINGS_PAGE_EFFECTS);   /* the last file the reset removes */
     [settingsPanel selectPage:SETTINGS_PAGE_DISPLAY]; tick();
     pick(@"Model detail distance (LOD)", @"1x (as the game has it)"); pick(@"Render distance", @"1x (as the game has it)"); assert(runtime_lod_scale() == 1 && runtime_far_scale() == 1);
     assert(switched(@"Bloom")); flip(@"Bloom", NO); assert(!fakeFxOn[1] && !strcmp(savedName, "graphics-effects.txt") && !strcmp(savedWord, "bloom"));

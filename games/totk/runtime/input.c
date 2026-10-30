@@ -274,6 +274,10 @@ static void *input_file(void *arg) {
             extern void runtime_far_scale_set(double k);
             char *end; double k = strtod(line + 9, &end); if (end == line + 9 || !(k >= 0.001 && k <= 100)) runtime_fail("farscale takes 0.001 to 100");
             runtime_far_scale_set(k);
+        } else if (!strncmp(line, "shadowscale ", 12)) {   /* "shadowscale <K>": the sun's shadow maps x K per side, as the effects page */
+            extern void runtime_shadow_scale_set(double k);
+            char *end; double k = strtod(line + 12, &end); if (end == line + 12 || !(k >= 0.25 && k <= 8)) runtime_fail("shadowscale takes 0.25 to 8");
+            runtime_shadow_scale_set(k);
         } else if (!strncmp(line, "fovscale ", 9)) {   /* "fovscale <K>": the game camera's field of view x K, as the effects page */
             extern void runtime_fov_scale_set(double k);
             char *end; double k = strtod(line + 9, &end); if (end == line + 9 || !(k >= 0.5 && k <= 2)) runtime_fail("fovscale takes 0.5 to 2");

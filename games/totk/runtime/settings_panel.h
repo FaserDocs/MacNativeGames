@@ -57,6 +57,9 @@
      field of view        0.8x .. 1.5x                       runtime_fov_scale_set: the game camera's vertical FOV
                                                              (its zooms scale too); graphics-fov.txt (x100)
      model detail distance also "always the finest" (graphics-lod.txt "max": the level a model has up close)
+     shadow resolution    off / 1x (800) / 2x / 3x / 4x      runtime_shadow_scale_set (game_patches_v143.c: the cascades'
+                                                             size x K where the game works it out); off = the effect
+                                                             switch "shadow" (totk_ssao.h); graphics-shadow.txt (x100)
      FXAA anti-aliasing   switch                             dm_gfx_fxaa_set (gfx/nvn/totk_finish.h); graphics-fxaa.txt
      sharpening           off / 25% / 50% / 75% / 100%       dm_gfx_sharpen_set: FSR 1 RCAS on the 3D picture;
                                                              graphics-sharpen.txt (percent)
@@ -94,6 +97,7 @@ int dm_gfx_fx_available(int i); int dm_gfx_fx_on(int i); void dm_gfx_fx_set(int 
 double runtime_lod_scale(void); void runtime_lod_scale_set(double k); int runtime_lod_scale_locked(void);   /* game_patches_v143.c */
 double runtime_far_scale(void); void runtime_far_scale_set(double k); int runtime_far_scale_locked(void);
 double runtime_fov_scale(void); void runtime_fov_scale_set(double k); int runtime_fov_scale_locked(void); int runtime_fov_available(void);
+double runtime_shadow_scale(void); void runtime_shadow_scale_set(double k); int runtime_shadow_scale_locked(void);
 void dm_gfx_fxaa_set(int on); int dm_gfx_fxaa_on(void); void dm_gfx_sharpen_set(int pct); int dm_gfx_sharpen(void);   /* gfx/nvn/totk_finish.h */
 #endif
 int nvn_fps_lock(void);
@@ -178,6 +182,7 @@ static void settings_effects_restore(void) {
  if(!runtime_lod_scale_locked()&&runtime_setting_word("graphics-lod.txt",word,sizeof word)&&!strncmp(word,"max",3))runtime_lod_scale_set(SETTINGS_LOD_MAX);
  else if(!runtime_lod_scale_locked()&&settings_read_number("graphics-lod.txt",100,10000,&d))runtime_lod_scale_set(d/100);
  if(!runtime_fov_scale_locked()&&settings_read_number("graphics-fov.txt",50,200,&d))runtime_fov_scale_set(d/100);
+ if(!runtime_shadow_scale_locked()&&settings_read_number("graphics-shadow.txt",25,800,&d))runtime_shadow_scale_set(d/100);
  if(runtime_setting_word("graphics-fxaa.txt",word,sizeof word)&&!strncmp(word,"off",3))dm_gfx_fxaa_set(0);
  if(settings_read_number("graphics-sharpen.txt",0,100,&d))dm_gfx_sharpen_set((int)d);
  if(!runtime_far_scale_locked()&&settings_read_number("graphics-far.txt",0.1,1000,&d))runtime_far_scale_set(d/100);
@@ -376,14 +381,35 @@ static TOTKSettingRow *settings_fov_row(void) {
  NSMutableArray<NSString *> *choices=[NSMutableArray array];for(NSNumber *v in values)[choices addObject:text(v.intValue)];
  return settings_row(t,choices,values,^int{return (int)lround(runtime_fov_scale()*100);},^(int v){runtime_fov_scale_set(v/100.0);settings_save_int("graphics-fov.txt",v,"field of view");});
 }
+/* The sun's shadows: off (the effect switch "shadow": the shadow term lit) or their maps' resolution, x1 being the game's
+   800 x 800 per cascade; graphics-shadow.txt holds the resolution (x100), graphics-effects.txt whether they are off. */
+static int settings_fx_index(const char *id) { for(int i=0;i<dm_gfx_fx_count();i++)if(!strcmp(dm_gfx_fx_id(i),id))return i; return -1; }
+static TOTKSettingRow *settings_shadow_row(void) {
+ NSString *t=settings_text("阴影分辨率","Shadow resolution");int fx=settings_fx_index("shadow");
+ NSString *(^text)(int)=^NSString *(int v){
+  if(!v)return settings_text("关（无阴影）","Off (no shadows)");
+  if(v==100)return settings_text("1×（游戏原样 800）","1x (as the game has it, 800)");
+  return [NSString stringWithFormat:@"%g×（%d）",v/100.0,v*8];};
+ int (^current)(void)=^int{return fx>=0&&!dm_gfx_fx_on(fx)?0:(int)lround(runtime_shadow_scale()*100);};
+ if(runtime_shadow_scale_locked())return settings_fixed(t,text(current()));
+ NSMutableArray<NSNumber *> *values=[@[@0,@100,@200,@300,@400] mutableCopy];
+ if(fx<0||!dm_gfx_fx_available(fx))[values removeObject:@0];
+ if(![values containsObject:@(current())])[values addObject:@(current())];
+ NSMutableArray<NSString *> *choices=[NSMutableArray array];for(NSNumber *v in values)[choices addObject:text(v.intValue)];
+ return settings_row(t,choices,values,current,^(int v){
+  if(fx>=0&&dm_gfx_fx_available(fx))dm_gfx_fx_set(fx,v!=0);
+  if(v){runtime_shadow_scale_set(v/100.0);settings_save_int("graphics-shadow.txt",v,"shadow resolution");}
+  settings_effects_save();});
+}
 static NSArray<TOTKSettingRow *> *settings_effect_rows(void) {
- NSMutableArray<TOTKSettingRow *> *rows=[NSMutableArray arrayWithObjects:settings_fov_row(),settings_distance_row(1),settings_distance_row(0),nil];
+ NSMutableArray<TOTKSettingRow *> *rows=[NSMutableArray arrayWithObjects:settings_fov_row(),settings_distance_row(1),settings_distance_row(0),settings_shadow_row(),nil];
  /* FXAA (the game's edge smoothing of the 3D picture) and sharpening (FSR 1 RCAS on the 3D picture, not the UI) */
  [rows addObject:settings_row(settings_text("FXAA 抗锯齿","FXAA anti-aliasing"),nil,nil,^int{return dm_gfx_fxaa_on();},^(int v){
   dm_gfx_fxaa_set(v);runtime_setting_save("graphics-fxaa.txt",v?"on":"off","FXAA");})];
  [rows addObject:settings_row(settings_text("锐化","Sharpening"),@[settings_text("关（游戏原样）","Off (as the game has it)"),@"25%",@"50%",@"75%",@"100%"],@[@0,@25,@50,@75,@100],
   ^int{return dm_gfx_sharpen();},^(int v){dm_gfx_sharpen_set(v);settings_save_int("graphics-sharpen.txt",v,"sharpening");})];
  for(int i=0;i<dm_gfx_fx_count();i++){
+  if(!strcmp(dm_gfx_fx_id(i),"shadow"))continue;   /* in the shadow resolution row */
   NSString *t=@(TOTK_UI(dm_gfx_fx_name(i,0),dm_gfx_fx_name(i,1)));
   if(!dm_gfx_fx_available(i)){[rows addObject:settings_fixed(t,settings_text("这个版本没有","Not in this version"))];continue;}
   [rows addObject:settings_row(t,nil,nil,^int{return dm_gfx_fx_on(i);},^(int v){dm_gfx_fx_set(i,v);settings_effects_save();})];
@@ -418,9 +444,10 @@ static void settings_effects_reset(void) {
  if(!runtime_fov_scale_locked())runtime_fov_scale_set(1);
  if(!runtime_lod_scale_locked())runtime_lod_scale_set(1);
  if(!runtime_far_scale_locked())runtime_far_scale_set(1);
+ if(!runtime_shadow_scale_locked())runtime_shadow_scale_set(1);
  dm_gfx_fxaa_set(1);dm_gfx_sharpen_set(0);
  for(int i=0;i<dm_gfx_fx_count();i++)if(!dm_gfx_fx_on(i))dm_gfx_fx_set(i,1);
- for(const char *const *f=(const char *const[]){"graphics-fov.txt","graphics-lod.txt","graphics-far.txt","graphics-fxaa.txt","graphics-sharpen.txt","graphics-effects.txt",NULL};*f;f++)
+ for(const char *const *f=(const char *const[]){"graphics-fov.txt","graphics-lod.txt","graphics-far.txt","graphics-fxaa.txt","graphics-sharpen.txt","graphics-effects.txt","graphics-shadow.txt",NULL};*f;f++)
   runtime_setting_remove(*f);
 #endif
  fprintf(stderr,"[totk] settings: the effects page back to the defaults\n");

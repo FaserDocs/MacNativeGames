@@ -449,7 +449,47 @@ static void patch_fov(Module *m){
     fprintf(stderr,"[totk] 1.4.3 field of view x%g (the game camera's vertical FOV), stub +%#llx\n",k,(unsigned long long)stub);
 #endif
 }
+/* Shadow resolution (Mac, the settings panel's effects page or TOTK_SHADOW_SCALE=<K>, 2026-10-30): the shadow setup works
+   out each cascade's size as align8(max(32, s0 x base)) from the settings' base size (+0x190 / +0x194, 800 x 800) and a
+   scale the game clamps (main+0xf5998 width, +0xf59b8 height), stores it (+0x3d8 / +0x3f8) and makes or updates the
+   cascade's textures from it at once (main+0xf5a1c -> 0xfca60; found with TOTK_SIZE_CHAIN=800x800). Each multiply
+   branches to a stub that multiplies by K from the data page (+0x198), so the textures, viewports and everything sized
+   from those fields follow; K = 1 is the game's own (an exact multiply by 1). s3 was last read at 0xf5960. */
+#define SHADOW_DATA_SLOT 0x198u
 #if !TARGET_OS_IPHONE
+static _Atomic uint32_t *shadow_factor;
+static double shadow_k=1;
+#endif
+static void patch_shadow_res(Module *m){
+#if TARGET_OS_IPHONE
+    (void)m;
+#else
+    double k=env_factor("TOTK_SHADOW_SCALE",0.25);if(k)shadow_k=k;else k=shadow_k;
+    if(k>8)runtime_fail("TOTK_SHADOW_SCALE takes 0.25 to 8");
+    static const Patch sites[]={{0xf5998,0x1e220801,0x1e230821},{0xf59b8,0x1e210800,0x1e230800}};   /* fmul s1,s0,s2 / s0,s0,s1; then x K in s3 */
+    static const Patch next[]={{0xf599c,0x1e380029,0},{0xf59bc,0x1e38000a,0}};   /* fcvtzs w9,s1 / w10,s0 */
+    uint64_t data=(m->file_size+0x3fff)&~0x3fffULL,stub=((m->file_size+15)&~15ULL)+128+12*5*4+24+24;   /* after the FOV stub */
+    if(stub+32>data||data+SHADOW_DATA_SLOT+4>m->size)runtime_fail("1.4.3 shadow resolution layout");
+    for(unsigned i=0;i<32;i++)if(m->base[stub+i])runtime_fail("1.4.3 shadow resolution padding not empty");
+    for(unsigned i=0;i<2;i++){uint32_t w,n;memcpy(&w,m->base+sites[i].off,4);memcpy(&n,m->base+next[i].off,4);
+        if(w!=sites[i].original||n!=next[i].original)runtime_fail("1.4.3 shadow resolution: the shadow setup does not match");}
+    for(unsigned i=0;i<2;i++){
+        uint64_t at=stub+i*16,lit=data+SHADOW_DATA_SLOT-(at+4);
+        uint32_t words[4]={sites[i].original,0x1c000000|(((uint32_t)(lit>>2)&0x7ffff)<<5)|3,sites[i].replacement,branch(at+12,sites[i].off+4)};
+        memcpy(m->base+at,words,sizeof words);
+    }
+    shadow_factor=(_Atomic uint32_t *)(void *)(m->base+data+SHADOW_DATA_SLOT);factor_store(shadow_factor,k);
+    for(unsigned i=0;i<2;i++){uint32_t j=branch(sites[i].off,stub+i*16);memcpy(m->base+sites[i].off,&j,4);}
+    fprintf(stderr,"[totk] 1.4.3 shadow resolution x%g (cascades %gx%g), stub +%#llx\n",k,800*k,800*k,(unsigned long long)stub);
+#endif
+}
+#if !TARGET_OS_IPHONE
+void runtime_shadow_scale_set(double k){
+    shadow_k=k;if(shadow_factor)factor_store(shadow_factor,k);
+    fprintf(stderr,"[totk] shadowscale: shadow resolution x%g\n",k);
+}
+double runtime_shadow_scale(void){return shadow_k;}
+int runtime_shadow_scale_locked(void){const char *e=getenv("TOTK_SHADOW_SCALE");return e&&*e;}
 void runtime_fov_scale_set(double k){
     fov_k=k;if(fov_factor)factor_store(fov_factor,k);
     float g=fov_factor?((const volatile float *)fov_factor)[1]:0;
@@ -558,6 +598,7 @@ void runtime_game_patches(Module *m) {
     patch_lod_distance(m);
     patch_far_distance(m);
     patch_fov(m);   /* after aspect_install: Vert+ may hold the same load */
+    patch_shadow_res(m);
     const char *enabled = getenv("TOTK_FPS60");
     if (enabled && !strcmp(enabled, "0")) {
         fprintf(stderr, "[totk] 1.4.3 shipping frame controller (TOTK_FPS60=0)\n");
