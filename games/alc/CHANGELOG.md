@@ -601,3 +601,32 @@ patch table is present; "Fixed 900p" still maps to res-1600x900 / force-scaling-
 `make patches` once to generate the table (14 rows of 60fps + 9 rows of res-1920x1080).
 
 Not done here: no per-scene soak at 1080p yet, and the frame-interpolation HDR issue above is unchanged by this.
+
+### 2026-10-30: the work folder rebuilt from scratch in this repository; the app ships
+
+The old work folder lived in a second clone that was deleted by accident; everything was regenerated here and every
+step came out byte-identical to the pinned values: ExeFS hashes for all four blocks okay; base RomFS through all six
+IVFC levels (8,701 files, 10,309,560,892 bytes, SHA-256 cdfb7043…); the merged 1.0.1 RomFS 8,701 files / 10,310,254,332
+bytes (182,747,996 bytes from the update); the rewrite (`DM_RULESET=native DM_PRIVATE_GATES=0`) sdk 10,957 sites and
+main 5,426 sites with all four rewritten hashes matching `assets/expected-v1.0.1.json` exactly, and 87,192
+relocations. `make prepare`, `make patches` (60fps 14 rows + res-1920x1080 9 rows), `make shader-tools` and
+`make runtime` all ran clean; the rebuilt binary booted the title at 1920x1080 with both patches applied and MetalFX
+output upscaling 1920x1080 -> 3010x1686 at 0.74 ms/frame.
+
+**The app** (`make app GAME=<card> KEYS=<prod.keys>` then `make install`) puts Astral Chain.app in /Applications with
+the game's own icon, running the game from `AC_build` (no data is copied). Three launcher fixes were needed to make it
+usable for a player:
+
+- **`TOTK_FREE_CORES=1` was missing.** The Makefile's boot target sets it (the task manager's user-space spin starves
+  its own fiber without it — stage 3), but the launcher never did, so an app launch parked at frame 0 with no present.
+  Verified after the fix: first presented frame 0.203 s through the app.
+- **The window could open larger than the screen.** A 1920x1080-point window on a 1512-point-wide display opens partly
+  off screen and a covered window stops presenting; the launcher now clamps the requested size to the screen's visible
+  frame (1488x828 here) and the drawable keeps the backing scale, so MetalFX still gets 2944x1656 from the 1920x1080
+  picture.
+- **The presets now default to 60 fps with the fixed 1080p patch and MetalFX on** (Recommended and Quality, the latter
+  full screen and without film grain); Original stays 30 fps as on the console, and the interpolation choices stay off
+  (the HDR canvases still wash interpolated frames, see above).
+
+`scripts/extract_shared_fonts.py` was missing from this folder (the icon script imports it); copied from games/by3
+unchanged and recorded in third_party/COPIES.md.

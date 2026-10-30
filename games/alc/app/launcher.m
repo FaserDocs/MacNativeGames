@@ -26,10 +26,10 @@ static BOOL spanish(void) { return [NSLocale.preferredLanguages.firstObject hasP
 typedef struct { const char *name_es, *name_en; int fps, fixed900, fullscreen, metalfx, output, lod, nograin, size, interp; } Preset;
 static const Preset presets[] = {
     {"Original (30 fps, como en la consola)", "Original (30 fps, as on the console)", 30, 0, 0, 0, 0, 0, 0, 2, 0},
-    {"Recomendado (60 fps, ventana)", "Recommended (60 fps, window)", 60, 0, 0, 1, 0, 0, 0, 2, 0},
-    {"Rendimiento (60 fps, 900p fija)", "Performance (60 fps, fixed 900p)", 60, 1, 0, 1, 0, 0, 0, 2, 0},
-    {"Calidad (60 fps, pantalla completa, MetalFX, sin grano)", "Quality (60 fps, full screen, MetalFX, no grain)", 60, 1, 1, 1, 0, 0, 1, 2, 0},
-    {"Monitor rápido (120 fps experimental, pantalla completa, MetalFX)", "Fast monitor (120 fps experimental, full screen, MetalFX)", 120, 1, 1, 1, 0, 0, 1, 2, 0},
+    {"Recomendado (60 fps, 1080p, MetalFX)", "Recommended (60 fps, 1080p, MetalFX)", 60, 2, 0, 1, 0, 0, 0, 2, 0},
+    {"Rendimiento (60 fps, 900p fija, MetalFX)", "Performance (60 fps, fixed 900p, MetalFX)", 60, 1, 0, 1, 0, 0, 0, 2, 0},
+    {"Calidad (60 fps, 1080p, pantalla completa, MetalFX, sin grano)", "Quality (60 fps, 1080p, full screen, MetalFX, no grain)", 60, 2, 1, 1, 0, 0, 1, 2, 0},
+    {"Monitor rápido (120 fps experimental, 1080p, pantalla completa, MetalFX)", "Fast monitor (120 fps experimental, 1080p, full screen, MetalFX)", 120, 2, 1, 1, 0, 0, 1, 2, 0},
 };
 enum { NPRESETS = sizeof presets / sizeof *presets };
 static const int fps_values[] = {30, 60, 120};
@@ -261,7 +261,15 @@ int main(int argc, char **argv) {
             if (h > 0 && h < px.height) setenv("TOTK_DRAWABLE_SCALE", [NSString stringWithFormat:@"%.4f", h / px.height].UTF8String, 1);
         }
         NSInteger s = [d integerForKey:@"size"]; if (s < 0 || s > 3) s = 2;
-        setenv("TOTK_WINDOW_SIZE", [NSString stringWithFormat:@"%dx%d", sizes[s][0], sizes[s][1]].UTF8String, 1);
+        {   /* A window larger than the screen opens partly off it, and a covered window stops presenting; keep the
+               chosen size when it fits, else the largest that does (points, so the drawable stays that size x the
+               backing scale — MetalFX still gets more pixels than the game renders). */
+            NSScreen *sc = all.count ? all[mi] : NSScreen.mainScreen;
+            NSSize vis = sc.visibleFrame.size; int w = sizes[s][0], h = sizes[s][1];
+            if (w > vis.width - 24) w = (int)vis.width - 24;
+            if (h > vis.height - 48) h = (int)vis.height - 48;
+            setenv("TOTK_WINDOW_SIZE", [NSString stringWithFormat:@"%dx%d", w, h].UTF8String, 1);
+        }
         if (![d objectForKey:@"metalfx"] || [d boolForKey:@"metalfx"]) { setenv("TOTK_MFX_UPSCALE", "1", 1); setenv("TOTK_MFX_OUTPUT", "1", 1); }
         { NSInteger ip = [d integerForKey:@"interp"];
           if (ip == 1) setenv("TOTK_MFX", "interp30", 1);
@@ -276,6 +284,10 @@ int main(int argc, char **argv) {
         setenv("TOTK_GAME_SLOT_DIR", slot.fileSystemRepresentation, 1);
         setenv("TOTK_ROMFS_PROOF_DIR", data.fileSystemRepresentation, 1);
         NSString *preferred = NSLocale.preferredLanguages.firstObject; if (preferred) setenv("TOTK_LOCALE", preferred.UTF8String, 1);
+        /* TOTK_FREE_CORES: the game's task manager waits on its fiber with a user-space spin that never enters an
+           SVC, so the virtual-core model cannot preempt it and the fiber starves — without this the boot parks at
+           frame 0 with no present (CHANGELOG, stage 3). The Makefile's boot target sets it too. */
+        setenv("TOTK_FREE_CORES", "1", 1);
         setenv("TOTK_GPU_ALLOW_SUBMIT", "1", 1); setenv("TOTK_GPU_WIDEN", "1", 1); setenv("TOTK_GPU_BLOCKRT", "1", 1);
         setenv("TOTK_GPU_MIDCLEAR", "1", 1); setenv("TOTK_GPU_BUDGET_MB", "5000", 1);
         setenv("DM_PRESENT_LINK_FALLBACK", "1", 1);   // keep presenting when macOS pauses the display link for a window it thinks covered
