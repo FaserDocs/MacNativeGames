@@ -533,3 +533,12 @@ press. (First press in that session showed "on" because the launch had TOTK_MFX_
 Also observed while capturing interpolated frames (TOTK_MFX_SHOT=<frames>:<path>): during the tutorial dialogue the
 game frame dims the background but the interpolated frame shows it undimmed — the dimmer apparently rides somewhere
 other than the scene canvas or the UI layer. Cosmetic, present in menus only; left open with the wshot issue.
+
+**Screen-level verification of the gamma fix (user still saw the old symptom).** The player reported 30+30 flickering
+and 60+60 overexposed while plain 60 looked right — the exact signature of the double-encoded interpolated frames, but
+measured against the pre-fix session they were playing (the fix landed while that session was live; `flag mfx_interp`
+keeps cycling modes inside a running process). Measured on the fixed build at the compositor level — full-screen
+`screencapture` of the window eight times under interpmax and twelve times under 30+30: the sky region reads
+identical (±1/255) across captures that necessarily include both game and interpolated frames, under both modes. The
+fix holds on the screen, not just in the textures. One caveat for the next player report: ask which launch the
+symptom was seen on before re-deriving color chains.
