@@ -29,7 +29,10 @@ static void apply_file(Module *m, const char *slug) {
         uint8_t now[1024], was[1024]; size_t nn, nw;
         if (!a || !b || !hexbytes(a + 1, now, sizeof now, &nn) || !hexbytes(b + 1, was, sizeof was, &nw) || nn != nw)
             runtime_fail("malformed game patch table");
-        if (off + nn > m->text_end && off < m->ro_off) runtime_fail("game patch in the rewrite area");
+        /* Patches live in .text, or entirely inside the assembler padding between .text and .rodata —
+           original dead bytes, mapped r-x with the text (the 60 FPS whole-tick cave lives there). */
+        if (off + nn > m->text_end && !(off >= m->text_end && off + nn <= m->ro_off))
+            runtime_fail("game patch in the rewrite area");
         if (off + nn > m->file_size) runtime_fail("game patch beyond main");
         if (memcmp(m->base + off, was, nw)) { fprintf(stderr, "[alc] patch %s at main+%#llx: original bytes differ\n", slug, (unsigned long long)off); runtime_fail("game patch does not match this game version"); }
         memcpy(m->base + off, now, nn); sys_icache_invalidate(m->base + off, nn); applied++;
