@@ -11742,7 +11742,7 @@ static int fps_overlay_prepare(int slot, MTLViewport vp, MTLViewport *ovp, float
     int gen = gen_at && cur - gen_at < 30 ? fps_overlay_gen_value() : 0;
     uint64_t src = atomic_load(&g_pic_src);
     fps_overlay_info info = {fps_overlay_value(), (int)lround(vp.width), (int)lround(vp.height), mfx_at && cur - mfx_at < 30, gen > 0 ? gen : 0, atomic_load(&g_pic_big),
-                             (int)(src & 0xffffffff), (int)(src >> 32)};
+                             (int)(g_mfx.canvas_w ?: (unsigned)(src & 0xffffffff)), (int)(g_mfx.canvas_h ?: (unsigned)(src >> 32))};
     if (hud_compact()) { char text[96]; fps_overlay_text(&info, text, sizeof text); hud_publish(HUD_FPS, text, 0); return 0; }   // shown in the window's corner panel
     pthread_mutex_lock(&mu);
     if (g_fps_key[slot].scale != scale || memcmp(&g_fps_key[slot].info, &info, sizeof info)) {
@@ -11770,7 +11770,9 @@ static int shader_overlay_prepare(int slot, MTLViewport vp, MTLViewport *ovp, fl
     uint64_t now = clock_gettime_nsec_np(CLOCK_UPTIME_RAW), newest = last > plast ? last : plast;
     char text[48]; shader_overlay_text(text, sizeof text, fresh, total, pso);
     int hl = newest && now - newest < 3000000000ull, scale = fps_overlay_scale(vp.height);
-    if (hud_compact()) { hud_publish(HUD_SHADER, text, hl); return 0; }
+    if (hud_compact()) { hud_publish(HUD_SHADER, text, hl);
+        { char pso[96]; pso_overlay_text(pso, sizeof pso, atomic_load(&g_collect_new[1]), (int64_t)g_pso.n); hud_publish(HUD_PSO, pso, 0); }
+        return 0; }
     pthread_mutex_lock(&mu);
     if (g_shd_key[slot].scale != scale || g_shd_key[slot].hl != hl || strcmp(g_shd_key[slot].text, text)) {
         fps_overlay_raster_line(text, hl, scale, px, &g_shd_box[slot][0], &g_shd_box[slot][1]);

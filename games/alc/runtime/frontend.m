@@ -9,6 +9,7 @@
 #include "game_version.h"
 #include "totk_ui_lang.h"
 #include "../third_party/d2r_gfx/gfx/nvn/totk_mfx_mode.h"
+#include "../third_party/d2r_gfx/gfx/nvn/fps_overlay.h"
 int mfxup_output_enabled(void);
 static NSWindow *window;
 uint64_t dm_nvn_frame_count(void);   /* gfx/nvn/hle_nvn.c: game frames presented so far */
@@ -155,7 +156,13 @@ static NSString *shortcut_text(void){
  else{CGFloat w=MIN(560,MAX(280,self.superview.bounds.size.width-40)),h=168;f=NSMakeRect(floor((self.superview.bounds.size.width-w)/2),floor((self.superview.bounds.size.height-h)/2),w,h);in=NSInsetRect(NSMakeRect(0,0,w,h),20,18);}
  if(!NSEqualRects(self.frame,f))self.frame=f;self.label.frame=in;}
 @end
-void runtime_shortcut_help_toggle(void){int show=fps_overlay_toggle_hints();dispatch_async(dispatch_get_main_queue(), ^{shortcutHelp.hidden=!show;});}
+void runtime_shortcut_help_toggle(void){
+    /* Key 1 cycles the HUD: all -> minimal (FPS only) -> off -> all (the settings panel will take over, see TotK). */
+    static int mode = 1;   // HUD_MODE_ALL
+    mode = mode == 1 ? 2 : mode == 2 ? 0 : 1;   // HUD_ALL -> MINIMAL -> OFF
+    fps_overlay_set_hud_mode(mode);
+    int show = mode != 0;
+    dispatch_async(dispatch_get_main_queue(), ^{shortcutHelp.hidden=!show;});}
 /* The drawable follows the window's pixel size; the present pass scales the game picture (1920x1080 docked) into it and
    keeps 16:9 (black bars on other shapes), so a larger window or full screen shows the game at its own resolution instead
    of a fixed small drawable that the compositor stretches. */
