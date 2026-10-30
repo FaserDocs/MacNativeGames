@@ -57,6 +57,16 @@ int runtime_output_res(unsigned *w, unsigned *h) { (void)w; (void)h; return 0; }
 uint64_t runtime_output_res_extra_bytes(void) { return 0; }
 uint64_t runtime_output_size_current(void) { return (uint64_t)1080 << 32 | 1920; }
 int runtime_output_res_toggle(void) { return 0; }
-int runtime_output_mode_cycle(void) { return 0; }
+/* Key 3 cycles the MetalFX output upscale (the present stage that sharpens into windows and full-screen draws larger
+   than the game's 1600x900 canvas). Astral Chain has no TotK 2K modes behind it; in a 1:1 window both states look the
+   same, the switch shows once the window or the full-screen draw exceeds the canvas. */
+extern int mfxup_output_enabled(void);
+extern void mfxup_output_set(int on);
+int runtime_output_mode_cycle(void) {
+    int on = !mfxup_output_enabled();
+    mfxup_output_set(on);
+    fprintf(stderr, "[alc] key 3: MetalFX output upscale %s\n", on ? "on" : "off");
+    return 1;
+}
 int runtime_aspect_toggle(void) { return 0; }
 float runtime_aspect_now(void) { return 0; }

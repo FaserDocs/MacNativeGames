@@ -142,8 +142,8 @@ static void ensure_out(id<MTLDevice> dev, NSUInteger w, NSUInteger h, MTLPixelFo
     g.scene_fmt = fmt;
     g.ui = mk(MTLPixelFormatRGBA16Float, w, h, rt);
     for (int i = 0; i < MFX_OUT; i++) {
-        g.out[i] = mk(MTLPixelFormatRGBA8Unorm_sRGB, w, h, MTLTextureUsageShaderWrite | MTLTextureUsageShaderRead | MTLTextureUsageRenderTarget | MTLTextureUsagePixelFormatView);
-        g.outv[i] = [g.out[i] newTextureViewWithPixelFormat:MTLPixelFormatRGBA8Unorm];
+        g.out[i] = mk(MTLPixelFormatRGBA8Unorm, w, h, MTLTextureUsageShaderWrite | MTLTextureUsageShaderRead | MTLTextureUsageRenderTarget);
+        g.outv[i] = g.out[i];   // linear output: no sRGB view needed (see ensure_fi)
     }
     g.out_w = w; g.out_h = h; g.fi = nil; g.prev_ok = g.hist_ok = 0;
     MLOG("scene (format %lu) / UI / output textures %lux%lu", (unsigned long)fmt, (unsigned long)w, (unsigned long)h);
@@ -169,7 +169,11 @@ static void ensure_fi(NSUInteger iw, NSUInteger ih) {
     g.fi = fi_cached(iw, ih);
     if (!g.fi) {
         MTLFXFrameInterpolatorDescriptor *d = [MTLFXFrameInterpolatorDescriptor new];
-        d.colorTextureFormat = g.scene_fmt; d.outputTextureFormat = MTLPixelFormatRGBA8Unorm_sRGB;
+        /* Astral Chain's canvas already holds display-encoded values (the game's own composite writes them), so the
+           interpolator's sRGB output encoding would gamma-lift every interpolated frame (measured: sky 20,28,80 in the
+           game frame vs 84,94,152 in the interpolated one — exactly the sRGB encode). Linear output keeps the round
+           trip at identity; TotK's canvas is linear and keeps its own sRGB path in its own fork. */
+        d.colorTextureFormat = g.scene_fmt; d.outputTextureFormat = MTLPixelFormatRGBA8Unorm;
         d.depthTextureFormat = g.depth_fmt ? g.depth_fmt : MTLPixelFormatDepth32Float; d.motionTextureFormat = MTLPixelFormatRG16Float; d.uiTextureFormat = MTLPixelFormatRGBA16Float;
         d.inputWidth = iw; d.inputHeight = ih; d.outputWidth = g.out_w; d.outputHeight = g.out_h;
         id<MTL4Compiler> comp = [g.dev newCompilerWithDescriptor:[MTL4CompilerDescriptor new] error:&e];

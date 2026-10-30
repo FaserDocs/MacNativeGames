@@ -508,3 +508,28 @@ kill by pgrep pattern without the anchor; and grep on the active log file under-
 **Open**: wshot (window screenshot) does not land while interpolation is on (to be looked at); the 30+30/half-rate
 modes on a 60 Hz display are TotK-verified paths but were not re-checked for this game; long-session soak with
 interpolation on the Prologue's heavier scenes.
+
+### 2026-10-30: the interpolated frames ran one gamma too bright — and key 3 did nothing (both fixed, user-reported)
+
+**White/washed-out picture with interpolation on.** The player saw the whole picture go bright whenever interpolation
+was active. Measured on identical title-screen frames: the game frame's sky reads RGB 20,28,80 while the interpolated
+one read 84,94,152 — and 113,133,176 against 54,76,124 — exactly the sRGB encode of the game's values (decode of 0.078
+is 0.30; observed 0.33). Mechanism: Astral Chain's canvas already holds display-encoded values (the game's composite
+blends them into the presented texture with plain linear mixing — checked the translated shader), but the shared
+interpolator is built for TotK's canvas, which holds linear values: it interpolates them and writes an sRGB output
+texture, whose hardware encode is what makes TotK's present come out right. Feeding it display values encodes a second
+time and every interpolated frame arrived one gamma bright. Fix (this fork only): the frame interpolator's output
+texture is plain RGBA8Unorm and mfx_output returns it directly — the round trip is identity. Verified: interpolated
+sky 24,29,81 against the game frame's 20,28,80 (interpolation between two slightly different frames), the mid-right
+region 59,72,124 against 59,73,125.
+
+**Key 3 (output mode cycle) was a stub.** runtime.h declares key 3 as TotK's "MetalFX 2K -> native 2K -> off" cycle;
+this fork's game_patches.c answered `return 0`, so the key did nothing. Astral Chain has no 2K modes behind it — the
+run-time switchable part of the picture pipeline is the MetalFX output upscale — so key 3 now flips it on/off
+(mfxup_output_set) and logs the state. In a 1:1 window both states look the same by design; the switch becomes visible
+once the window or the full-screen draw exceeds the 1600x900 canvas. Verified live: the log flips mfx_output 0/1 per
+press. (First press in that session showed "on" because the launch had TOTK_MFX_OUTPUT unset — off — by default.)
+
+Also observed while capturing interpolated frames (TOTK_MFX_SHOT=<frames>:<path>): during the tutorial dialogue the
+game frame dims the background but the interpolated frame shows it undimmed — the dimmer apparently rides somewhere
+other than the scene canvas or the UI layer. Cosmetic, present in menus only; left open with the wshot issue.
