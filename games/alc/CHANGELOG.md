@@ -542,3 +542,40 @@ keeps cycling modes inside a running process). Measured on the fixed build at th
 identical (±1/255) across captures that necessarily include both game and interpolated frames, under both modes. The
 fix holds on the screen, not just in the textures. One caveat for the next player report: ask which launch the
 symptom was seen on before re-deriving color chains.
+
+### 2026-10-30 (continued): interpolation in gameplay — the depth/camera chain fixed; the canvas is HDR, and that is what still washes the interpolated frames
+
+Chasing the player's "still overexposed in gameplay, plain 60 is right" (the gamma fix had been verified on the title
+screen only), a live A/B settled where the brightness lives: with the game focused and the window region captured,
+interpolation off reads (53,60,79) and on reads (104,122,118) — every capture inside a mode identical, so the *shown
+mix* is uniform and the game's own frames are untouched. Toggling the UI layer live (`flag mfx_ui`) changed nothing
+(103.7 vs 103.4), so the wash is in the frame interpolator's own output.
+
+Two real bugs were found and fixed on the way, both about *which* pass the interpolator's inputs come from:
+
+- **The depth slot was being claimed by the wrong passes.** The rule "D32, no colour attachments, canvas size" first
+  matched shadow atlases (2048x2048 — visible as the FI being rebuilt between 2048x2048 / 1280x810 / 1600x900), then
+  the game's **UI-only depth pass** (also canvas size). The camera block read from those passes is the shadow / UI
+  camera (identity or static), giving a motion-vector reprojection that never moved: `flag mvlog` reported median
+  0.00 px on every frame while the player walked, i.e. every "interpolated" frame was a copy of the previous one —
+  which is exactly the flicker/stutter the player described at 30+30. The claim now needs a depth texture of exactly
+  the canvas size **and 4+ draws into it** (counted by depth serial, since the replay may split one game pre-pass into
+  several Metal passes; pass numbers at setup are the previous pass). Verified in gameplay: camera reads a real pose
+  (`pos -101.5 23.0 -70.8`, yaw 140.3°, VP row -0.887 0 0.735) and the motion texture is non-zero while the camera
+  turns (`x 61.9 px` median on a 3.6°/frame step).
+- **Camera reads from unclaimed passes polluted the state.** The ALC branch fell through to `mfx_take_camera()` even
+  when no pass had been claimed, so menu/UI passes wrote identity cameras over good ones. The ALC path now only reads
+  the camera at the claim.
+
+The remaining wash is structural: Astral Chain's scene canvas is **RGBA16F HDR** (the game tone-maps while compositing
+it into the presented RGBA8 texture), while the interpolator writes display-referred output; interpolating HDR values
+and writing them without the game's tone map brightens and desaturates exactly as measured. The title screen was fine
+because its background is a movie composited as display values. The fix is to snapshot the **presented** texture (after
+the game's composite, before its UI draws) instead of the canvas — the same boundary the UI layer already uses — and
+that is the next piece of work; it needs the pass split the canvas snapshot already does, moved after the composite
+draw.
+
+**Shipping decision:** the launcher's presets no longer enable interpolation (the control stays, marked experimental),
+so a player cannot land in the washed mode by picking a preset. The 60 FPS patch, MetalFX output upscale and key 3's
+master-switch fix (the key used to flip only the output stage while the scaler's master switch stayed closed — that is
+why it "did nothing") are unaffected and remain on.

@@ -305,8 +305,11 @@ NSArray *mfx_frame_encode(id<MTL4CommandBuffer> cb, int s, id<MTL4CounterHeap> h
 }
 /* TOTK_MFX_MVLOG=<every n frames>: read the motion texture back after the interpolation and log its median and the
    camera step (diagnostic; waits for the GPU). */
+static _Atomic int g_mvlog_req;
+void mfx_mv_log_set(int n) { atomic_store(&g_mvlog_req, n); }
 void mfx_mv_log(void) {
     static int every = -1; if (every < 0) { const char *e = getenv("TOTK_MFX_MVLOG"); every = e ? atoi(e) : 0; }
+    { int req = atomic_load(&g_mvlog_req); if (req > 0) { every = req; atomic_store(&g_mvlog_req, 0); } else if (req < 0) every = 0; }
     if (every <= 0 || !g.mv || g.made % (uint64_t)every) return;
     static id<MTLCommandQueue> q; if (!q) q = [g.dev newCommandQueue];
     NSUInteger w = g.mv.width, h = g.mv.height;

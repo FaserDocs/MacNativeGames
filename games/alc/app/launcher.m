@@ -25,11 +25,11 @@ static BOOL spanish(void) { return [NSLocale.preferredLanguages.firstObject hasP
    interp: MetalFX frame interpolation, 0 = off, 1 = 30+30, 2 = half the refresh rate, 3 = every frame interpolated. */
 typedef struct { const char *name_es, *name_en; int fps, fixed900, fullscreen, metalfx, output, lod, nograin, size, interp; } Preset;
 static const Preset presets[] = {
-    {"Original (30 fps, como en la consola)", "Original (30 fps, as on the console)", 30, 0, 0, 0, 0, 0, 0, 2, 1},
+    {"Original (30 fps, como en la consola)", "Original (30 fps, as on the console)", 30, 0, 0, 0, 0, 0, 0, 2, 0},
     {"Recomendado (60 fps, ventana)", "Recommended (60 fps, window)", 60, 0, 0, 1, 0, 0, 0, 2, 0},
     {"Rendimiento (60 fps, 900p fija)", "Performance (60 fps, fixed 900p)", 60, 1, 0, 1, 0, 0, 0, 2, 0},
-    {"Calidad (120 fps, pantalla completa, MetalFX, sin grano)", "Quality (120 fps, full screen, MetalFX, no grain)", 60, 1, 1, 1, 0, 0, 1, 2, 3},
-    {"Monitor rápido (120 fps experimental, pantalla completa, MetalFX)", "Fast monitor (120 fps experimental, full screen, MetalFX)", 120, 1, 1, 1, 0, 0, 1, 2, 3},
+    {"Calidad (60 fps, pantalla completa, MetalFX, sin grano)", "Quality (60 fps, full screen, MetalFX, no grain)", 60, 1, 1, 1, 0, 0, 1, 2, 0},
+    {"Monitor rápido (120 fps experimental, pantalla completa, MetalFX)", "Fast monitor (120 fps experimental, full screen, MetalFX)", 120, 1, 1, 1, 0, 0, 1, 2, 0},
 };
 enum { NPRESETS = sizeof presets / sizeof *presets };
 static const int fps_values[] = {30, 60, 120};
@@ -89,7 +89,7 @@ static NSString *screen_name(NSScreen *s) { return s.localizedName ?: @"?"; }
     self.size = [self popup:sizeTitles];
     self.output = [NSPopUpButton new]; self.output.target = self; self.output.action = @selector(changed:);
     self.scaler = [self segments:@[T("MetalFX (más nítido)", "MetalFX (sharper)"), T("Normal", "Plain")]];
-    self.interp = [self segments:@[T("No", "Off"), @"30+30", T("Mitad de la frecuencia", "Half the rate"), T("Cada fotograma", "Every frame")]];
+    self.interp = [self segments:@[T("No", "Off"), T("30+30 (experimental)", "30+30 (experimental)"), T("Mitad de la frecuencia", "Half the rate"), T("Cada fotograma", "Every frame")]];
     self.lod = [NSButton checkboxWithTitle:T("LOD mejorado (más detalle a distancia)", "Improved LOD (more distant detail)") target:self action:@selector(changed:)];
     self.grain = [NSButton checkboxWithTitle:T("Quitar el grano de película", "Remove film grain") target:self action:@selector(changed:)];
     self.mod = [self popup:@[T("Ninguno", "None")]]; self.mods = romfs_mods(); [self.mod addItemsWithTitles:self.mods];

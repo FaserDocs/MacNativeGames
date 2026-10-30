@@ -2355,7 +2355,11 @@ void dm_gfx_set_flag(const char *name, int v) {
     if (!strcmp(name, "render_stream")) { atomic_store(&g_rs_on, v != 0); MLOG("[flag] render_stream = %d (next render pass)", v != 0); return; }
     if (!strcmp(name, "cube_merge")) { atomic_store(&g_cg_on, v != 0); MLOG("[flag] cube_merge = %d", v != 0); return; }
     if (!strcmp(name, "skip_invisible")) { skv_set(v); return; }
-    if (!strcmp(name, "mfx_upscale")) { mfxup_set(v < 0 ? !mfxup_enabled() : v); return; }   // TOTK_MFX_UPSCALE at run time (manual key 3 picture mode)
+    if (!strcmp(name, "mfx_upscale")) { mfxup_set(v < 0 ? !mfxup_enabled() : v); return; }
+        if (!strcmp(name, "camlog")) { extern void mfx_camlog_set(long n); mfx_camlog_set(v); return; }
+        if (!strcmp(name, "mfx_ui")) { extern void mfx_ui_layer_set(int on); mfx_ui_layer_set(v); return; }   // the UI layer of the interpolated frame, live
+        if (!strcmp(name, "ubodump")) { extern void mfx_ubodump_req(void); mfx_ubodump_req(); return; }   // dump the depth pre-pass draw's vertex uniforms on its next first draw   // log the next v captured cameras
+        if (!strcmp(name, "mvlog")) { extern void mfx_mv_log_set(int n); mfx_mv_log_set(v); return; }   // log the motion texture for the next v interpolated frames   // TOTK_MFX_UPSCALE at run time (manual key 3 picture mode)
     if (!strcmp(name, "mfx_interp")) { mfx_set(v); return; }
     if (!strcmp(name, "draw_log")) { extern _Atomic long g_draw_log; atomic_store(&g_draw_log, v); MLOG("[flag] draw_log: every draw and dispatch of the next %d frames", v); return; }
     if (!strcmp(name, "uw_log")) { extern _Atomic long g_uw_log; atomic_store(&g_uw_log, v); MLOG("[flag] uw_log: canvas draws of the next %d frames", v); return; }   // key 4 UI squeeze diagnostic
@@ -3677,7 +3681,8 @@ static struct { uint32_t cfmt[8], dfmt, sfmt, samples; int hd, hs; NSUInteger tw
    depth and the camera. role: 2 UI with the game's blend, 3 opaque UI. */
 #define MFX_ROLE_UI 2
 #define MFX_ROLE_UI_OPAQUE 3
-static struct { uint64_t canvas, last_c0, swap[4]; uint32_t swap_w, swap_h, canvas_w, canvas_h; int nswap, scene_done, ui_cleared, depth_done, want_cam, role; uint64_t frames; } g_mfx;
+static _Atomic int g_mfx_ui_on = -1;   // ALC_MFX_UI / flag mfx_ui: the UI layer of interpolated frames
+static struct { uint64_t canvas, last_c0, swap[4]; uint32_t swap_w, swap_h, canvas_w, canvas_h; int nswap, scene_done, ui_cleared, depth_done, want_cam, role, claim_draws; uint64_t frames, pending_serial; } g_mfx;
 static id<MTLRenderPipelineState> g_enc_pso; static id<MTLDepthStencilState> g_enc_dss;   // 本编码器上已设的（相同不重设） | Already set on this encoder (not set again if identical)
 static int g_enc_vis, g_enc_has_vis;   // 本编码器当前的可见性计数模式（0 关 / 槽号 + 1）、是否挂了可见性缓冲 | This encoder's current visibility count mode (0 off / slot number + 1), and whether a visibility buffer is attached
 static int g_pso_dirty = 1, g_dss_dirty = 1;   // 回放中改了管线 / 深度模板相关状态 | Pipeline / depth-stencil related state was changed during replay
@@ -4311,8 +4316,23 @@ static void mfx_pass_setup(MTL4RenderPassDescriptor *pd) {
     if (!g_mfx.depth_done && dt && (dt.pixelFormat == MTLPixelFormatDepth32Float || dt.pixelFormat == MTLPixelFormatDepth32Float_Stencil8) && dt.width >= 320) {
         int nc = 0; for (int i = 0; i < R.rt.n && i < 8; i++) nc += pd.colorAttachments[i].texture != nil;
         /* The pre-pass's D24S8 runs as Depth32Float_Stencil8 on Apple GPUs; the interpolator takes the raw
-           texture (its descriptor follows the actual format — a D32F view of D32S8 is not viewable here). */
-        if (nc == 0) { mfx_note_depth(dt); g_mfx.depth_done = 1; g_mfx.want_cam = 1; }
+           texture (its descriptor follows the actual format — a D32F view of D32S8 is not viewable here).
+           Width must match the canvas: the first D32 nc==0 passes also include shadow atlases (2048x2048),
+           and shadow depth — with the shadow camera's uniforms — once fed the interpolator, gave it a
+           motion-vector camera that never moved (interpolated frames blurred a gamma bright in motion). */
+        /* Stage the candidate: the game ALSO runs a UI-only depth pass at the canvas size (its first draw is the
+           dcab964e UI quad VS), and whichever pass opens first would otherwise win. The claim happens at the first
+           draw, by vertex shader (draw_inner). */
+        if (nc == 0 && g_mfx.canvas_w && dt.width == g_mfx.canvas_w && dt.height == g_mfx.canvas_h) {
+            /* Stage the candidate; claim it once the pass has drawn 4+ draws. The game also runs a UI-only depth
+               pass at the canvas size — one or two dcab964e quad draws — and whichever pass opens first would
+               otherwise win (the UI pass's uniforms have no camera, and the interpolator's motion vectors all
+               collapsed to zero: every interpolated frame was a copy of the previous one). */
+            /* Counted by depth texture (not pass number: at setup the pass number is the previous one), so the
+               replay splitting one game pre-pass into several Metal passes still accumulates. */
+            if (g_mfx.pending_serial != R.rt.depth->serial) { g_mfx.pending_serial = R.rt.depth->serial; g_mfx.claim_draws = 0; }
+            g_mfx.want_cam = 1;
+        }
     }
 #else
     if (!g_mfx.depth_done && dt && c0 && dt.pixelFormat == MTLPixelFormatDepth32Float && dt.width == c0.width && dt.height == c0.height && dt.width >= 320) {
@@ -4324,7 +4344,8 @@ static void mfx_pass_setup(MTL4RenderPassDescriptor *pd) {
     /* Astral Chain composites the float canvas into the presented texture and draws the UI on top of it there, so the
        UI layer rides on the passes into the presented texture (after the scene snapshot). ALC_MFX_UI=1 turns this on;
        the 8-target PSO variants on the game's own composite/UI passes are under test (GPU faults in the first run). */
-    static int ui_on = -1; if (ui_on < 0) { const char *e = getenv("ALC_MFX_UI"); ui_on = e && *e ? *e != '0' : mfx_enabled(); }   // default: with the interpolation
+    if (atomic_load(&g_mfx_ui_on) < 0) { static int init; if (!init) { init = 1; const char *e = getenv("ALC_MFX_UI"); atomic_store(&g_mfx_ui_on, e && *e ? (*e != '0') : mfx_enabled()); } }   // default: with the interpolation
+    int ui_on = atomic_load(&g_mfx_ui_on) > 0;
     int alc_ui_pass = 0;
     if (ui_on && t0 && g_mfx.scene_done) for (int i = 0; i < g_mfx.nswap; i++) alc_ui_pass |= g_mfx.swap[i] == t0->serial;
     /* only passes into a presented texture at the canvas resolution: the game also presents lower-res movie frames, and a UI layer at the movie size would recreate the mfx textures every switch (GPU faults, 2026-10-30). */
@@ -9270,6 +9291,11 @@ static void prepare_draw_textures(NvProg *pr) {
 }
 /* TOTK_MFX: the camera of the G-buffer pass, from its first draw: vertex uniform 1, the 2368-byte block (view, view-projection,
    projection, inverse view, near / far, aspect, field of view; floats 84..167 hold the camera of two frames earlier). */
+static _Atomic long camlog_req;
+void mfx_camlog_set(long n) { atomic_store(&camlog_req, n); }   // flag camlog <n>: log the next n captured cameras
+void mfx_ui_layer_set(int on) { atomic_store(&g_mfx_ui_on, on != 0); MLOG("[mfx] UI layer of interpolated frames: %s", on ? "on" : "off"); }   // flag mfx_ui <0|1>
+static _Atomic int ubodump_req;
+void mfx_ubodump_req(void) { atomic_store(&ubodump_req, 1); }   // flag ubodump: dump the next depth-pre-pass first draw's vertex uniforms
 static void mfx_take_camera(void) {
     g_mfx.want_cam = 0;
     float cam[84];
@@ -9280,6 +9306,19 @@ static void mfx_take_camera(void) {
        (the view translation moves with the camera), near, far, aspect and the vertical field of view. */
     {
         const p_bind_buf *v0 = &S.ubo[0][0], *v13 = &S.ubo[0][13];
+        { int ur = atomic_load(&ubodump_req);   // flag ubodump: all vertex uniform binds of this draw (the hunt re-run live)
+          if (ur) { atomic_store(&ubodump_req, 0);
+            for (int r = 0; r < 16; r++) {
+                const p_bind_buf *q = &S.ubo[0][r];
+                if (!q->addr || !q->size) continue;
+                uint8_t b[128]; int n2 = q->size < sizeof b ? (int)q->size : (int)sizeof b;
+                pend_materialize(q->addr, b, n2, 0);
+                char f2[520]; int o = 0;
+                for (int i = 0; i < n2 / 4 && o < (int)sizeof f2 - 16; i++) o += snprintf(f2 + o, sizeof f2 - o, "%g%s", *(float *)(b + 4 * i), i % 8 == 7 ? " / " : ",");
+                MLOG("[mfx] ubodump F%llu pass %llu vreg%d addr %#llx size %llu: %s", (unsigned long long)atomic_load(&g_cur_frame), g_stat_pass, r,
+                     (unsigned long long)q->addr, (unsigned long long)q->size, f2);
+            } }
+        }
         if (v0->addr && v0->size >= 128 && v13->addr && v13->size >= 16) {
             float b[32], pr[4];
             pend_materialize(v0->addr, (uint8_t *)b, sizeof b, 0);
@@ -9296,9 +9335,11 @@ static void mfx_take_camera(void) {
             cam[70] = 2.0f * atanf(pr[3]);                             // vertical fov, radians
             cam[72] = (float)g_mfx.swap_w; cam[73] = (float)g_mfx.swap_h;
             mfx_note_camera(cam, 84);
-            /* TOTK_MFX_CAMLOG=<first>-<last frame>: every captured camera (diagnostic) */
+            /* TOTK_MFX_CAMLOG=<first>-<last frame> / flag camlog <n>: every captured camera (diagnostic) */
             static long c0 = -2, c1; if (c0 == -2) { const char *e = getenv("TOTK_MFX_CAMLOG"); c0 = e ? atol(e) : -1; c1 = e && strchr(e, '-') ? atol(strchr(e, '-') + 1) : c0; }
             long f = (long)atomic_load(&g_cur_frame);
+            long req = atomic_load(&camlog_req);
+            if (req > 0) { atomic_store(&camlog_req, 0); c0 = f; c1 = f + req - 1; } else if (req < 0) c0 = -1;
             if (c0 >= 0 && f >= c0 && f <= c1) MLOG("[mfx] camera F%ld pass %llu near %g far %g fov %.4f aspect %.4f yaw %.3f pos %.3f %.3f %.3f vp0 %.5f %.5f %.5f %.3f",
                 f, g_stat_pass, cam[56], cam[57], cam[70], cam[62], atan2(cam[2], cam[0]) * 180 / M_PI, cam[47], cam[51], cam[55], cam[12], cam[13], cam[14], cam[15]);
             return;
@@ -10080,7 +10121,39 @@ frz_plain:;
         }
         if (r != g_mfx.role) { g_mfx.role = r; g_pso_dirty = 1; }
     }
-    if (g_mfx.want_cam) mfx_take_camera();
+    if (g_mfx.want_cam) {
+#if GAME_ALC
+        if (g_mfx.pending_serial && R.rt.depth && R.rt.depth->serial == g_mfx.pending_serial) {
+            if (++g_mfx.claim_draws >= 4) {
+                /* 4+ draws into the staged depth pass: the 3D scene pre-pass (the UI's own depth pass draws
+                   one or two quads and never reaches this). Claim it and take the camera from its first draws'
+                   uniforms, which the camera adapter reads. */
+                g_mfx.want_cam = 0; g_mfx.depth_done = 1; g_mfx.pending_serial = 0;
+                { id<MTLTexture> pd = tex_mtl(R.rt.depth); if (pd) mfx_note_depth(pd); }
+                static uint64_t vs_last_pass; static int vs_said;
+                if (vs_last_pass != g_stat_pass && vs_said++ < 6) { vs_last_pass = g_stat_pass; MLOG("[mfx] depth pre-pass claimed: vs %.16s fs %.16s (pass %llu, frame %llu)", pr && pr->sh[0] ? pr->sh[0]->key : "-", pr && pr->sh[1] ? pr->sh[1]->key : "-", g_stat_pass, (unsigned long long)atomic_load(&g_cur_frame)); }
+                { int ur = atomic_load(&ubodump_req);   // flag ubodump: all vertex uniform binds of this draw
+                  if (ur) { atomic_store(&ubodump_req, 0);
+                    for (int r = 0; r < 16; r++) {
+                        const p_bind_buf *q = &S.ubo[0][r];
+                        if (!q->addr || !q->size) continue;
+                        uint8_t b[128]; int n2 = q->size < sizeof b ? (int)q->size : (int)sizeof b;
+                        pend_materialize(q->addr, b, n2, 0);
+                        char f2[520]; int o = 0;
+                        for (int i = 0; i < n2 / 4 && o < (int)sizeof f2 - 16; i++) o += snprintf(f2 + o, sizeof f2 - o, "%g%s", *(float *)(b + 4 * i), i % 8 == 7 ? " / " : ",");
+                        MLOG("[mfx] ubodump F%llu pass %llu vreg%d addr %#llx size %llu: %s", (unsigned long long)atomic_load(&g_cur_frame), g_stat_pass, r,
+                             (unsigned long long)q->addr, (unsigned long long)q->size, f2);
+                    } }
+                  }
+                mfx_take_camera();
+            }
+        }
+        /* NOT here: the game's other depth passes carry identity / non-camera uniforms, and reading them poisoned
+           the camera (identity VP -> zero motion vectors -> every interpolated frame a copy of the previous one). */
+#else
+        mfx_take_camera();
+#endif
+    }
     if (defer_q_draw) defer_replay();
     if (skip_d) { g_stat_ds_omit++; if (mode == 3) g_stat_s_only++; else if (mode == 4) g_stat_d_only++; }
     // 管线只依赖（程序, 通道目标, 混合 / 颜色 / 写掩码 / 多重采样状态, 顶点布局）：这些没变就沿用上次的
