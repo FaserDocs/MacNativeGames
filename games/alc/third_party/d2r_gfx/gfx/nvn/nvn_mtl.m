@@ -12166,6 +12166,19 @@ static void cadence_note(double tt, int interp) {
     }
     pthread_mutex_unlock(&mu);
 }
+/* The minimum display time of a picture (presentAfterMinimumDuration): the present period cut down to whole refreshes,
+   less a millisecond — the period itself was too long wherever it is not a whole number of refreshes (a 90 / 72 fps
+   lock on a 120 Hz display waited for a second refresh and ran at 60, and a 120 lock took one whenever the timing came
+   a little short). Shorter than one refresh (uncapped) is unchanged. From the TotK tree, 2026-10-30. */
+#if !TARGET_OS_SIMULATOR
+static double present_min_duration(double period) {
+    static double tick; static unsigned n;   // the refresh interval, read again every 240 pictures (the window may move)
+    if (!tick || ++n % 240 == 0) { int hz = mtl_display_hz(); tick = hz > 0 ? 1.0 / hz : 0; }
+    if (tick <= 0 || period < tick * 0.98) return period;
+    double whole = floor(period / tick + 0.02) * tick;
+    return whole - fmin(0.001, tick / 4);
+}
+#endif
 static int present_now(const tex_t *t, double period, uint64_t frame, uint64_t ticket, const int crop[4], id<CAMetalDrawable> supplied, double target_ts, int interp) {
     if (g_present_stall_ns) { struct timespec ts = {0, (long)g_present_stall_ns}; nanosleep(&ts, NULL); }
     g_present_n++;
@@ -12501,7 +12514,7 @@ static int present_now(const tex_t *t, double period, uint64_t frame, uint64_t t
     // 每张至少显示一个出图周期：GPU 完成时刻在 120 Hz 刷新边界附近抖动时，不再出现「25 ms + 8.33 ms」成对的顿挫
     // Each frame is displayed for at least one present period: when the GPU completion time jitters around a 120 Hz refresh boundary, the paired "25 ms + 8.33 ms" stutter no longer appears
     if (target_ts > 0) [dr present];
-    else if (period > 0) [dr presentAfterMinimumDuration:period]; else [dr present];
+    else if (period > 0) [dr presentAfterMinimumDuration:present_min_duration(period)]; else [dr present];
 #endif
     (void)frame;
     return 1;

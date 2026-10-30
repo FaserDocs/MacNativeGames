@@ -219,3 +219,5 @@ void runtime_motion_phone(int on);  /* the iPhone's own sensor feeds the six-axi
 void runtime_motion_mouse(int on);  /* mouse mode (key 7) takes the sensor over (1) / gives it back to the controller (0) */
 void runtime_motion_feed_mouse(const double acc_g[3], const double gyro_rad_s[3], uint64_t now_ns);   /* already in the reference frame */
 void runtime_feedback_active(void);   /* the app became active: manual-activation controllers need their sensors on again */
+void runtime_gamepad_hid_battery(int left, int percent);   /* runtime/gamepad.m, any thread: a Switch controller's battery read from its HID reports (left: a paired set's left Joy-Con), -1 none */
+int runtime_gamepad_battery_left_percent(void);  /* runtime/gamepad.m: a paired Joy-Con set's left one, -1 none; the percent above is then the right one */

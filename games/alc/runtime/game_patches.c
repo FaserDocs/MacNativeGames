@@ -146,9 +146,6 @@ void runtime_audio_hold(int on) { (void)on; }
 void runtime_audio_output_restart(int recreate) { (void)recreate; }
 int runtime_phone_fps(void) { return 60; }
 void runtime_phone_fps_set(int fps) { (void)fps; }
-void runtime_motion_phone(int on) { (void)on; }
-void runtime_motion_mouse(int on) { (void)on; }
-void runtime_motion_feed_mouse(const double acc_g[3], const double gyro_rad_s[3], uint64_t now_ns) { (void)acc_g; (void)gyro_rad_s; (void)now_ns; }
 
 /* The TotK host hooks the shared graphics layer and the input keys call keep their names and answer "off". */
 void runtime_frame_step_pin(double ms) { (void)ms; }
