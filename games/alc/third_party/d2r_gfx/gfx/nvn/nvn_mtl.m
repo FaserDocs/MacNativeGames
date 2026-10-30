@@ -18,6 +18,7 @@
 #include <fcntl.h>
 #include "nvn_mtl.h"
 #include "nvn_obj.h"
+#include "totk_state_report.h"   /* totk_sr_gfx / totk_sr_counters, the state-report hooks */
 #include "../tex/nvn_fmt_mtl.h"
 #include "../tex/nvn_deswizzle.h"
 #include "../tex/nvn_deswizzle_gpu.h"
@@ -12179,6 +12180,36 @@ static double present_min_duration(double period) {
     return whole - fmin(0.001, tick / 4);
 }
 #endif
+/* The state-report hooks (totk_state_report.m, TOTK_STATE_REPORTING): what this port knows. TotK-only fields (edge
+   smoothing, temporal upscaling, the display-link rescue path) are 0 here; the counters this fork has are real. */
+void mtl_sr_picture(totk_sr_gfx *s, uint64_t *upscaled_at, uint64_t *antialiased_at) {
+    uint64_t pic = (uint64_t)atomic_load(&g_pic_src);
+    s->out_w = (int)(pic & 0xffffffff); s->out_h = (int)(pic >> 32);
+    float a = runtime_aspect_now ? runtime_aspect_now() : 0;
+    s->aspect_milli = a > 0 && fabsf(a - 16.0f / 9.0f) > 0.01f ? (int)lroundf(a * 1000) : 0;
+    s->upscale = mfxup_enabled() ? 1 + mfxup_output_enabled() : 0;
+    s->taa = 0; s->fi_mode = mfx_enabled(); s->temporal = 0;
+    s->present_path = 1;
+    *upscaled_at = atomic_load(&g_mfxup_last); *antialiased_at = 0;
+}
+void mtl_sr_counters(totk_sr_counters *c) {
+    c->game_frames = g_pq_done;   /* presents completed (the queue's ticket count) */
+    c->generated = g_gen_shown;
+    c->merged = 0;
+    c->translations = 0;
+    c->libraries = g_bp_lib_n; c->pipelines = g_bp_pso_n;
+    c->create_ns = g_bp_lib_ns + g_bp_pso_ns;
+    c->metal_bytes = g_dev ? g_dev.currentAllocatedSize : 0;
+    c->scene_w = (int)g_mfx.canvas_w; c->scene_h = (int)g_mfx.canvas_h;
+}
+/* The FPS the overlay shows, for the menu bar (frontend.m): game presents per second, -1 before the first measurement;
+   *generated: interpolated frames per second while frame interpolation shows them, else 0. */
+int dm_gfx_fps_now(int *generated) {
+    uint64_t gen_at = atomic_load(&g_mfxi_last), cur = atomic_load(&g_cur_frame);
+    int gen = gen_at && cur - gen_at < 30 ? (int)fps_overlay_gen_value() : 0;
+    if (generated) *generated = gen > 0 ? gen : 0;
+    return fps_overlay_value();
+}
 static int present_now(const tex_t *t, double period, uint64_t frame, uint64_t ticket, const int crop[4], id<CAMetalDrawable> supplied, double target_ts, int interp) {
     if (g_present_stall_ns) { struct timespec ts = {0, (long)g_present_stall_ns}; nanosleep(&ts, NULL); }
     g_present_n++;

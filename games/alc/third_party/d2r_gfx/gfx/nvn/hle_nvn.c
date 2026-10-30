@@ -2754,6 +2754,17 @@ static void sleep_until_ns(uint64_t dl) {   // 单调时钟上的绝对时刻 | 
 // DM_PRESENT_HZ=0 (uncapped frame rate) serves only as an explicit performance profiling switch: some of the game's UI logic counts frames (with the same save, uncapped gives
 // 4181 SaveIndicatorPanel entries and capped at 60 fps gives 0, which matches the ground truth), so uncapped is a semantically wrong way to run and must not be used as a criterion / cross-check / default. Unit tests set it directly with nvn_present_config
 static int g_hz = -1, g_display_mode;
+/* The frame lock (the settings panel): 0 off, or a rate from totk_fps_limits (30..120). The game is paced at exactly
+   that rate, display ticks where the rate divides the display's, our own clock otherwise — the same shape as the 30+30
+   interpolation mode's hold. The logic-step floor follows the resulting present pace on its own (game_patches.c), so
+   game speed stays right at any lock. */
+#include "include/totk_fps_limit.h"
+static _Atomic int g_fps_lock;
+void nvn_fps_lock_set(int fps) {
+    if (!totk_fps_limit_valid(fps)) return;
+    if (atomic_exchange(&g_fps_lock, fps) != fps) { if (fps) LOG("[nvn] 锁帧：%d 帧", fps); else LOG("[nvn] 锁帧：关"); }
+}
+int nvn_fps_lock(void) { return atomic_load(&g_fps_lock); }
 /* TOTK_UNCAPPED (Mac and iPhone, default on; =0 off): like vsync off in other games. The game no longer waits for the display: it is
    paced by our own clock at UNCAPPED_HZ, and the display link shows the newest finished frame at every refresh (older ones
    are merged away, as when the game runs ahead). The ceiling is 120 because the real-time frame step (game_patches.c)
@@ -2806,6 +2817,7 @@ static unsigned present_ticks(const win_t *o) {   /* display ticks per game fram
        Astral Chain: the present clock is fixed at 60 Hz (DM_PRESENT_HZ) while the display runs 120 Hz, so half-refresh
        means the display's two ticks — and a game still pacing at interval 2 (no 60 FPS patch) must keep 30+30, or the
        1.0 step floor would run it twice as fast. */
+    { int lock = atomic_load(&g_fps_lock); if (lock > 0) { int hz = g_paced_hz > 0 ? g_paced_hz : 60; return (unsigned)(hz >= 45 ? (hz + lock / 2) / lock : 1); } }
     int m = mfx_enabled();
     if (m == MFX_HALF) return o->interval > 1 ? (unsigned)(g_paced_hz >= 45 ? (g_paced_hz + 15) / 30 : 1) : 2;
     if (m == MFX_30) { int hz = g_paced_hz > 0 ? g_paced_hz : 60; return (unsigned)(hz >= 45 ? (hz + 15) / 30 : 1); }
@@ -2819,6 +2831,7 @@ static uint64_t present_period(const win_t *o) {
                                     m == MFX_MAX ? (g_uncapped ? "补帧 不限帧：不限帧率，每帧补一帧" : "补帧 不限帧：按游戏的出图间隔，每帧补一帧") :
                                     g_uncapped ? "补帧关：不限帧率" : "补帧关：按游戏的出图间隔"); was = m; }
     if (m == MFX_30) return 1000000000ull / 30;   /* exactly 30 fps, by display ticks or by our own clock */
+    { int lock = atomic_load(&g_fps_lock); if (lock > 0) return 1000000000ull / (uint64_t)lock; }   /* exactly the locked rate */
     if (m == MFX_HALF) {   /* half-refresh is measured in display ticks: the game period is two display refreshes
                               (16.67 ms game frames on the 120 Hz display, interpolated pictures in between), not two
                               ticks of the fixed 60 Hz present clock. Without the 60 FPS patch (interval 2) the game

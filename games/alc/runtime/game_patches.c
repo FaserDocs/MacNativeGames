@@ -55,8 +55,11 @@ static void set_step_floor(float floor) {
         if (w != cur && w != neww && w != STEP_FLOOR_WAS[i])
             { fprintf(stderr, "[alc] step floor main+%#x reads %08x, not a known floor word; leaving it\n", STEP_FLOOR_AT[i], w); return; }
     }
-    /* mprotect reports EINVAL across the loader's sub-mappings; the Mach call handles the same range fine. */
-    if (mach_vm_protect(mach_task_self(), (mach_vm_address_t)lo, 0x2000, FALSE, VM_PROT_READ | VM_PROT_WRITE)) {
+    /* mprotect reports EINVAL across the loader's sub-mappings; the Mach call handles the same range fine. Keep EXECUTE:
+       the game's own timer thread runs inside this page every frame, and a page without execute faults on its next
+       instruction fetch (a real crash seen as an instruction abort at main+0x91dbb0). The stores are aligned 32-bit
+       writes, so a thread running between them only ever sees one of the two floors, never a torn instruction. */
+    if (mach_vm_protect(mach_task_self(), (mach_vm_address_t)lo, 0x2000, FALSE, VM_PROT_READ | VM_PROT_WRITE | 0x04)) {
         fprintf(stderr, "[alc] step floor: raising the text to RW failed\n");
         return;
     }
@@ -135,6 +138,7 @@ void runtime_game_patches(Module *main_module) {
    the HUD, not TotK's aspect / output-mode / render-resolution modes, so those answer "not offered" here. The panel's
    rows are built from what exists (the launcher's presets remain the place for resolution). */
 int runtime_render_res(unsigned *w, unsigned *h) { (void)w; (void)h; return 0; }
+int runtime_output_mode(void) { return 0; }   /* OUTPUT_MODE_OFF: the launcher owns resolution */
 int runtime_output_modes(void) { return 0; }
 int runtime_output_mode_set(int mode) { (void)mode; return 0; }
 int runtime_output_native(int mode, unsigned *w, unsigned *h) { (void)mode; (void)w; (void)h; return 0; }

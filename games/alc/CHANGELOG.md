@@ -706,3 +706,31 @@ Verified live with the log and screenshots: key 1 -> `HUD FPS only` -> `HUD off`
 exactly the four monitoring lines and no key list; key 2 -> `mfx_interp = 1: 30+30`; key 3 -> `key 3: MetalFX output
 upscale off`. One boot hit the known `reserve guest stack, heap and alias regions` race (macOS address layout, B4) and
 succeeded on the retry.
+
+### 2026-10-30: the in-game settings panel ported (key 1), on this game's options
+
+TotK's panel (`runtime/settings_panel.h`, with `bindings_diagram.h`, `text_keyboard.h`, `playtime.h`) is now in, wired
+through TotK's own `frontend.m` (the newer superset of this folder's, adopted whole — it defines the panel's host state,
+the settings input view and the HUD box class the panel refreshes). The rows that are TotK's picture controls were
+replaced or dropped, because this game has no equivalents:
+
+- **Kept and real**: overlay mode (all / FPS only / off — drives the HUD), frame interpolation (off / 30+30 / half the
+  refresh rate / every frame — `mfx_set`), frame lock (off / 30 / 40 / 60 / 72 / 90 / 120 — a real lock now: `nvn_fps_lock_set`
+  paces the game at exactly that rate, and the adaptive logic-step floor follows the pace), controller type and the
+  settings button, rumble / gyro settings, key + mouse bindings (the diagram page draws this game's actions), playtime,
+  the contribution button, and the window/monitor rows.
+- **Dropped**: the resolution/output-mode row (this port's internal resolution is an exefs patch the launcher picks;
+  `runtime_output_modes()` answers 0), the aspect-ratio row (no aspect patch), edge smoothing (no host TAA), and the FPS
+  graph toggle's TotK plumbing (the graph view itself comes with TotK's frontend).
+
+Also ported for the frontend's sake: `totk_state_report.{h,m}` (the state-report diagnostic, with this fork's
+`mtl_sr_picture` / `mtl_sr_counters` reporting the counters it has and 0 for TotK-only ones), `dm_gfx_fps_now` (the menu
+bar FPS), `totk_shader_contrib.h`, and the contrib macros in `game_version.h` (`GAME_NAME`, `GAME_FOLDER` = ALC,
+`GAME_LOG`, `GAME_CONTRIB_TEMPLATE`, `GAME_CONTRIB_TITLE`) that `contrib_submit.h` needs.
+
+**Verified**: key 1 opens the panel over the running game and ESC closes it; the key-bindings page draws the full
+keyboard + mouse map with this game's actions (锁定/举盾, 能力, 地图, 踩下, 攻击, 跳跃, 确认/互动, 取消/冲刺, 视角, 主视角) and the
+controller page the same by position. With the panel closed, real keyboard events (System Events key codes) drive keys
+2 and 3: `mfx_interp = 1: 30+30` and `key 3: MetalFX output upscale off` in the log. The Display and Input tabs could
+not be clicked from the automation used here (synthetic clicks do not reach the custom view) — they need a hand click,
+but their rows are built from the code above.
