@@ -653,3 +653,36 @@ missing depth and shows the game's own frame — no fill, no wash, and still cor
 
 On the way: `AC_build/extracted/v101/main.decompressed.bin` is produced by the NSO decoder in `prepare_modules.py`
 (the raw layout parse in a scratch script was wrong); this analysis image is regenerated, not committed.
+
+### 2026-10-30: the latest TotK settings / monitoring / key mapping merged in (mechanisms, not TotK's options)
+
+Taken from `games/totk` as it stands (its copies are supersets of this folder's older ones):
+
+- **Monitoring**: `fps_overlay.c/.h`, `totk_sysload.c`, `totk_timeline.c/.h`. The HUD has modes — all lines / FPS only /
+  off — the FPS line shows the internal scene resolution in brackets ("FPS 60 3014x1688 (1920x1080) MetalFX已开启"),
+  and a render-pipeline line ("新渲染管线 0 / 总计 404") sits under the shaders. nvn_mtl supplies the scene size from
+  the learned canvas and publishes HUD_PSO; the corner box honours the modes.
+- **Key mapping**: `input.c` (the player's keyboard and mouse layout through keyboard_map.h, `keyboard.txt` next to
+  `controls.txt`; controller layout through controller_map.h; tap/toggle/hold modes; the diagnostic input-file
+  commands), `controller_map.h`, `keyboard_map.h`, `gamepad_layout.h`, `mouse_look.h`, `switch_left_fallback.h`,
+  `text_keyboard.h`, `bindings_diagram.h`.
+- **Settings storage and feedback**: `gamepad.m` (runtime_setting_* reading/writing the text settings files, mouse
+  mode, controller type, the settings button), `gamepad_feedback.m` + `hid_feedback.c` (rumble/gyro and their
+  settings), `feedback_settings.h`, `hid_imu.h`, `playtime.h`, `game_data.c/h`, `game_language.h`, plus the headers the
+  copied files need (aspect_math.h, aspect_patch.h, bow_state.h, contrib_submit.h, mem_scan.h, audio_ramp.h,
+  app/update_check.h, update_notice.h, totk_fps_limit.h).
+
+Astral Chain's own HID rows are re-attached in input.c's override table (older SDK: the single-state `GetNpadState`
+imports, the touch screen answered as "no touches", the handheld activation mode, `ShowControllerSupport` by
+reference), and the TotK-only picture APIs the copied files call are stubs in `game_patches.c` that answer "not
+offered" (aspect ratio, output modes, render resolution, phone fps/motion).
+
+**Not ported: the in-game settings panel.** Its rows are TotK's own options (2K modes, picture aspect, 40 fps
+limits) — none exist here, and porting them would drag in that whole subsystem to show rows that do nothing. Key 1
+therefore cycles the HUD instead; the launcher keeps the presets. When a panel is wanted for this game, its rows
+should be Astral Chain's (interpolation mode, MetalFX output, HUD, key bindings), built on the settings storage above.
+
+**Verified**: the game boots to the title with both patches (60 fps 14 sites, 1080p 9 sites), swapchain 1920x1080,
+first presented frame 0.198 s, zero GPU errors; key 1 cycles HUD all -> FPS only -> off -> all (log lines and three
+window screenshots); the HUD shows the four lines. Key bindings, mouse mode and rumble/gyro reach the game through the
+merged files but were not exercised by hand yet.
