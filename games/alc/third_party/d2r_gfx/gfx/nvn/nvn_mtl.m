@@ -3677,7 +3677,7 @@ static struct { uint32_t cfmt[8], dfmt, sfmt, samples; int hd, hs; NSUInteger tw
    depth and the camera. role: 2 UI with the game's blend, 3 opaque UI. */
 #define MFX_ROLE_UI 2
 #define MFX_ROLE_UI_OPAQUE 3
-static struct { uint64_t canvas, last_c0, swap[4]; uint32_t swap_w, swap_h; int nswap, scene_done, ui_cleared, depth_done, want_cam, role; uint64_t frames; } g_mfx;
+static struct { uint64_t canvas, last_c0, swap[4]; uint32_t swap_w, swap_h, canvas_w, canvas_h; int nswap, scene_done, ui_cleared, depth_done, want_cam, role; uint64_t frames; } g_mfx;
 static id<MTLRenderPipelineState> g_enc_pso; static id<MTLDepthStencilState> g_enc_dss;   // 本编码器上已设的（相同不重设） | Already set on this encoder (not set again if identical)
 static int g_enc_vis, g_enc_has_vis;   // 本编码器当前的可见性计数模式（0 关 / 槽号 + 1）、是否挂了可见性缓冲 | This encoder's current visibility count mode (0 off / slot number + 1), and whether a visibility buffer is attached
 static int g_pso_dirty = 1, g_dss_dirty = 1;   // 回放中改了管线 / 深度模板相关状态 | Pipeline / depth-stencil related state was changed during replay
@@ -4288,10 +4288,14 @@ static void canvas_learn(MTL4RenderPassDescriptor *pd) {
     if (t0 && c0 && g_mfx.swap_w) {
         int to_swap = 0; for (int i = 0; i < g_mfx.nswap; i++) to_swap |= g_mfx.swap[i] == t0->serial;
         if (to_swap) {
-            if (g_mfx.last_c0 && g_mfx.canvas != g_mfx.last_c0) { g_mfx.canvas = g_mfx.last_c0; MLOG("[mfx] canvas: texture %llu (%ux%u), copied to presented texture %llu", (unsigned long long)g_mfx.canvas, g_mfx.swap_w, g_mfx.swap_h, (unsigned long long)t0->serial); }
+            if (g_mfx.last_c0 && g_mfx.canvas != g_mfx.last_c0) { g_mfx.canvas = g_mfx.last_c0; id<MTLTexture> ct = serial_get(g_mfx.last_c0); g_mfx.canvas_w = ct ? (uint32_t)ct.width : 0; g_mfx.canvas_h = ct ? (uint32_t)ct.height : 0; MLOG("[mfx] canvas: texture %llu (%ux%u), copied to presented texture %llu", (unsigned long long)g_mfx.canvas, g_mfx.canvas_w, g_mfx.canvas_h, (unsigned long long)t0->serial); }
         } else if (c0.width >= 640 && fabs((double)c0.width * g_mfx.swap_h / ((double)c0.height * g_mfx.swap_w) - 1) < 0.01 && pd.colorAttachments[0].level == 0 &&
-                   MFX_CANVAS_FMT_OK(c0.pixelFormat) && !pd.depthAttachment.texture)
-            g_mfx.last_c0 = t0->serial;
+                   MFX_CANVAS_FMT_OK(c0.pixelFormat) && !pd.depthAttachment.texture) {
+            /* Astral Chain: the boot movies composite a half-size float buffer into the presented texture — only a
+               canvas near the presented size is the 3D scene (the movie presents would flip the canvas every switch). */
+            int near_swap = !g_mfx.swap_w || (int)c0.width * 10 >= (int)g_mfx.swap_w * 9;
+            if (near_swap) g_mfx.last_c0 = t0->serial;
+        }
     }
 }
 static void mfx_pass_setup(MTL4RenderPassDescriptor *pd) {
@@ -4299,11 +4303,35 @@ static void mfx_pass_setup(MTL4RenderPassDescriptor *pd) {
     const tex_t *t0 = R.rt.n > 0 ? R.rt.color[0] : NULL;
     id<MTLTexture> c0 = t0 ? pd.colorAttachments[0].texture : nil;
     id<MTLTexture> dt = pd.depthAttachment.texture;
+#if GAME_ALC
+    /* Astral Chain has no ≥3-colour G-buffer: a depth-only pre-pass (D32 at the scene size) then single-colour lighting
+       passes testing LEQUAL against that depth. The pre-pass's depth is the scene depth the interpolation needs, and its
+       first draw carries the camera in its vertex uniforms. Apple GPUs have no Depth24: the game's D24S8 runs as
+       Depth32Float_Stencil8, and the interpolator wants plain D32F — a view of the same storage. */
+    if (!g_mfx.depth_done && dt && (dt.pixelFormat == MTLPixelFormatDepth32Float || dt.pixelFormat == MTLPixelFormatDepth32Float_Stencil8) && dt.width >= 320) {
+        int nc = 0; for (int i = 0; i < R.rt.n && i < 8; i++) nc += pd.colorAttachments[i].texture != nil;
+        /* The pre-pass's D24S8 runs as Depth32Float_Stencil8 on Apple GPUs; the interpolator takes the raw
+           texture (its descriptor follows the actual format — a D32F view of D32S8 is not viewable here). */
+        if (nc == 0) { mfx_note_depth(dt); g_mfx.depth_done = 1; g_mfx.want_cam = 1; }
+    }
+#else
     if (!g_mfx.depth_done && dt && c0 && dt.pixelFormat == MTLPixelFormatDepth32Float && dt.width == c0.width && dt.height == c0.height && dt.width >= 320) {
         int nc = 0; for (int i = 0; i < R.rt.n && i < 8; i++) nc += pd.colorAttachments[i].texture != nil;
         if (nc >= 3) { mfx_note_depth(dt); g_mfx.depth_done = 1; g_mfx.want_cam = 1; }
     }
+#endif
+#if GAME_ALC
+    /* Astral Chain composites the float canvas into the presented texture and draws the UI on top of it there, so the
+       UI layer rides on the passes into the presented texture (after the scene snapshot). ALC_MFX_UI=1 turns this on;
+       the 8-target PSO variants on the game's own composite/UI passes are under test (GPU faults in the first run). */
+    static int ui_on = -1; if (ui_on < 0) { const char *e = getenv("ALC_MFX_UI"); ui_on = e && *e ? *e != '0' : mfx_enabled(); }   // default: with the interpolation
+    int alc_ui_pass = 0;
+    if (ui_on && t0 && g_mfx.scene_done) for (int i = 0; i < g_mfx.nswap; i++) alc_ui_pass |= g_mfx.swap[i] == t0->serial;
+    /* only passes into a presented texture at the canvas resolution: the game also presents lower-res movie frames, and a UI layer at the movie size would recreate the mfx textures every switch (GPU faults, 2026-10-30). */
+    if (t0 && c0 && alc_ui_pass && g_mfx.canvas_w && c0.width == g_mfx.canvas_w && c0.height == g_mfx.canvas_h && R.rt.n <= 7 && pd.colorAttachments[0].level == 0 && !pd.colorAttachments[7].texture) {
+#else
     if (t0 && c0 && g_mfx.scene_done && g_mfx.canvas == t0->serial && R.rt.n <= 7 && pd.colorAttachments[0].level == 0 && !pd.colorAttachments[7].texture) {
+#endif
         MTLRenderPassColorAttachmentDescriptor *a7 = pd.colorAttachments[7];
         a7.texture = mfx_ui_target(g_dev, c0.width, c0.height);
         a7.loadAction = g_mfx.ui_cleared ? MTLLoadActionLoad : MTLLoadActionClear; a7.clearColor = MTLClearColorMake(0, 0, 0, 0); a7.storeAction = MTLStoreActionStore;
@@ -4354,7 +4382,12 @@ static double uw_ui_squeeze(const char *vs, const p_draw *dw, const p_draw_idx *
    attachment) and copy the canvas into this frame's scene texture. */
 static void mfx_snapshot_scene(void) {
     if (g_enc) rp_end();
+#if GAME_ALC
+    /* The trigger draw goes into the presented texture; the scene is the float canvas the game blitted there. */
+    id<MTLTexture> c = g_mfx.canvas ? serial_get(g_mfx.canvas) : nil;
+#else
     id<MTLTexture> c = tex_mtl(R.rt.color[0]);
+#endif
     if (!c || c.textureType != MTLTextureType2D || c.mipmapLevelCount < 1) { g_mfx.scene_done = 1; return; }
     id<MTLTexture> sc = mfx_scene_target(g_dev, c.width, c.height, c.pixelFormat);
     static int rs_added; if (!rs_added) { [g_q4 addResidencySet:mfx_residency()]; rs_added = 1; }
@@ -9239,7 +9272,40 @@ static void prepare_draw_textures(NvProg *pr) {
    projection, inverse view, near / far, aspect, field of view; floats 84..167 hold the camera of two frames earlier). */
 static void mfx_take_camera(void) {
     g_mfx.want_cam = 0;
-    const p_bind_buf *u = &S.ubo[0][MFX_CAM_SLOT]; float cam[84];
+    float cam[84];
+#if GAME_ALC
+    /* Astral Chain's depth pre-pass binds two row-major 4x4 in vertex uniform 0 (view, then projection; translation in
+       the view's last column) and near / far / tan(fovX/2) / tan(fovY/2) in vertex uniform 13 (0.1, 9999.9, 0.828991,
+       0.466308 seen at boot). Compose the camera block the interpolation consumes: view rows, VP = P·V, the position
+       (the view translation moves with the camera), near, far, aspect and the vertical field of view. */
+    {
+        const p_bind_buf *v0 = &S.ubo[0][0], *v13 = &S.ubo[0][13];
+        if (v0->addr && v0->size >= 128 && v13->addr && v13->size >= 16) {
+            float b[32], pr[4];
+            pend_materialize(v0->addr, (uint8_t *)b, sizeof b, 0);
+            pend_materialize(v13->addr, (uint8_t *)pr, sizeof pr, 0);
+            memset(cam, 0, sizeof cam);
+            memcpy(cam, b, 12 * sizeof(float));                        // view rows 0..2
+            for (int i = 0; i < 4; i++) for (int j = 0; j < 4; j++) {  // VP = P·V
+                float s = 0; for (int k = 0; k < 4; k++) s += b[16 + i * 4 + k] * b[k * 4 + j];
+                cam[12 + i * 4 + j] = s;
+            }
+            cam[47] = b[3]; cam[51] = b[7]; cam[55] = b[11];           // view translation
+            cam[56] = pr[0]; cam[57] = pr[1];                          // near, far
+            cam[62] = pr[3] > 0 ? pr[2] / pr[3] : 0;                   // aspect
+            cam[70] = 2.0f * atanf(pr[3]);                             // vertical fov, radians
+            cam[72] = (float)g_mfx.swap_w; cam[73] = (float)g_mfx.swap_h;
+            mfx_note_camera(cam, 84);
+            /* TOTK_MFX_CAMLOG=<first>-<last frame>: every captured camera (diagnostic) */
+            static long c0 = -2, c1; if (c0 == -2) { const char *e = getenv("TOTK_MFX_CAMLOG"); c0 = e ? atol(e) : -1; c1 = e && strchr(e, '-') ? atol(strchr(e, '-') + 1) : c0; }
+            long f = (long)atomic_load(&g_cur_frame);
+            if (c0 >= 0 && f >= c0 && f <= c1) MLOG("[mfx] camera F%ld pass %llu near %g far %g fov %.4f aspect %.4f yaw %.3f pos %.3f %.3f %.3f vp0 %.5f %.5f %.5f %.3f",
+                f, g_stat_pass, cam[56], cam[57], cam[70], cam[62], atan2(cam[2], cam[0]) * 180 / M_PI, cam[47], cam[51], cam[55], cam[12], cam[13], cam[14], cam[15]);
+            return;
+        }
+    }
+#endif
+    const p_bind_buf *u = &S.ubo[0][MFX_CAM_SLOT];
     if (u->addr && u->size == MFX_CAM_SIZE) {
         pend_materialize(u->addr, (uint8_t *)cam, sizeof cam, 0);   // the bytes this draw sees: memory plus pending inline updates
         mfx_note_camera(cam, 84);
@@ -9248,8 +9314,26 @@ static void mfx_take_camera(void) {
         long f = (long)atomic_load(&g_cur_frame);
         if (c0 >= 0 && f >= c0 && f <= c1) MLOG("[mfx] camera F%ld pass %llu block %#llx size %.0fx%.0f near %g fov %.4f yaw %.3f pos %.3f %.3f %.3f vp0 %.5f %.5f %.5f %.3f",
             f, g_stat_pass, (unsigned long long)u->addr, cam[72], cam[73], cam[56], cam[70], atan2(cam[2], cam[0]) * 180 / M_PI, cam[47], cam[51], cam[55], cam[12], cam[13], cam[14], cam[15]);
-    } else { static int said; if (said++ < 5) MLOG("[mfx] G-buffer pass %llu: vertex uniform 1 is %#llx / %llu bytes, not the 2368-byte camera block (frame %llu)", g_stat_pass,
-                                                 (unsigned long long)u->addr, (unsigned long long)u->size, (unsigned long long)atomic_load(&g_cur_frame)); }
+    } else {
+        static int said; if (said++ < 5) MLOG("[mfx] G-buffer pass %llu: vertex uniform 1 is %#llx / %llu bytes, not the 2368-byte camera block (frame %llu)", g_stat_pass,
+                                              (unsigned long long)u->addr, (unsigned long long)u->size, (unsigned long long)atomic_load(&g_cur_frame));
+        /* ALC_MFX_UBODUMP=1: once, all vertex uniform binds of this draw (the depth pre-pass's first draw) with their
+           first 32 floats — the hunt for Astral Chain's camera block (view / view-projection / near / far). */
+        static int ubodumped;
+        if (!ubodumped && getenv("ALC_MFX_UBODUMP")) {
+            ubodumped = 1;
+            for (int r = 0; r < 16; r++) {
+                const p_bind_buf *q = &S.ubo[0][r];
+                if (!q->addr || !q->size) continue;
+                uint8_t b[128]; int n = q->size < sizeof b ? (int)q->size : (int)sizeof b;
+                pend_materialize(q->addr, b, n, 0);
+                char f[520]; int o = 0;
+                for (int i = 0; i < n / 4 && o < (int)sizeof f - 16; i++) o += snprintf(f + o, sizeof f - o, "%g%s", *(float *)(b + 4 * i), i % 8 == 7 ? " / " : ",");
+                MLOG("[mfx] ubodump F%llu pass %llu vreg%d addr %#llx size %llu: %s", (unsigned long long)atomic_load(&g_cur_frame), g_stat_pass, r,
+                     (unsigned long long)q->addr, (unsigned long long)q->size, f);
+            }
+        }
+    }
 }
 static void draw_inner(const p_draw *dw, const p_draw_idx *di);
 /* Diagnostic DM_NVN_NANDRAW=<first>-<last frame> (log DM_NVN_NANDRAW_LOG, default analysis/nandraw.tsv): after every
@@ -9965,6 +10049,17 @@ frz_plain:;
         PD("L %llu 分层通道内的绘制不能写层号，在此切开", g_stat_pass); rp_end(); g_lay.refuse = 1; g_lay.refused++; }
     if (!g_mfx.scene_done && g_mfx.canvas && R.rt.n > 0 && R.rt.color[0] && R.rt.color[0]->serial == g_mfx.canvas && pr && pr->sh[0] && MFX_UI_DRAW(pr) && mfx_enabled())
         mfx_snapshot_scene();   // TOTK_MFX: first UI draw into the canvas: copy the finished scene first
+#if GAME_ALC
+    /* Astral Chain draws its UI into the presented texture after blitting the float canvas there, so the scene
+       boundary is the first draw into a presented texture; the snapshot copies the canvas (mfx_snapshot_scene).
+       That first draw IS the scene composite — it must not enter the UI layer. */
+    static int g_mfx_alc_skip_role;
+    if (!g_mfx.scene_done && g_mfx.canvas && mfx_enabled() && R.rt.n > 0 && R.rt.color[0] && R.rt.color[0]->serial != g_mfx.canvas) {
+        uint64_t ts = R.rt.color[0]->serial;
+        int to_swap = 0; for (int i = 0; i < g_mfx.nswap; i++) to_swap |= g_mfx.swap[i] == ts;
+        if (to_swap) { mfx_snapshot_scene(); g_mfx_alc_skip_role = 1; }
+    }
+#endif
     if (!g_uw_ui && uw_on_canvas() && pr && pr->sh[0] && mfx_ui_vs(pr->sh[0]->key)) g_uw_ui = 1;   // key 4: the UI begins
     id<MTLRenderCommandEncoder> en = rp_begin_ex(mode);
     g_fd_dw = NULL; g_fd_di = NULL;
@@ -9972,6 +10067,10 @@ frz_plain:;
     if (g_pass.mfx || g_mfx.role) {   // TOTK_MFX: every draw into the canvas after the scene copy goes to the UI layer too
         int r = 0;
         if (g_pass.mfx) {
+#if GAME_ALC
+            if (g_mfx_alc_skip_role) g_mfx_alc_skip_role = 0;   // the scene composite draw: no UI layer
+            else
+#endif
             r = S.color.blend_en & 1 ? MFX_ROLE_UI : MFX_ROLE_UI_OPAQUE;
             /* TOTK_MFX_ROLELOG=<first>-<last frame>: every canvas draw with its role (diagnostic) */
             static long r0 = -2, r1; if (r0 == -2) { const char *e = getenv("TOTK_MFX_ROLELOG"); r0 = e ? atol(e) : -1; r1 = e && strchr(e, '-') ? atol(strchr(e, '-') + 1) : r0; }
@@ -12536,6 +12635,11 @@ static id<MTL4CommandAllocator> g_mfx_alloc[3]; static id<MTL4CommandBuffer> g_m
 static id<MTLTexture> g_mfx_swap_prev;   // TOTK_MFX_DUMP: copy of the previous presented image
 static int mfx_present_frame_body(const tex_t *t, double period, int discard) {
     if (t) uw_note_present(t);
+#if GAME_ALC
+    /* Movie frames present at their own (lower) resolution: no interpolation, and no 1600x900 interpolated picture
+       in place of an 800x450 game frame (mixed-size presents). */
+    if (t && g_mfx.canvas_w && (t->d.width != g_mfx.canvas_w || t->d.height != g_mfx.canvas_h)) { mfx_frame_abort(); return -1; }
+#endif
     int slot = mfx_frame_prepare(period);
     if (slot >= 0) {
         int a = -1; for (int i = 0; i < 3 && a < 0; i++) if (!atomic_load(&g_mfx_busy[i])) a = i;

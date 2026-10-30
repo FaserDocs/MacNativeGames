@@ -453,3 +453,58 @@ A live probe (scripts/fps60_live_probe.py, lldb attach) reads the timer mid-run:
 title screen; nobody has played it yet. **Open**: interactive play at 60 fps (prologue, first battle), cutscene
 speed (Bink2 — the step's override path, untested in this port regardless of frame rate), and the launcher preset
 flow (`fps ≥ 60` already selects the `60fps` patch slug). Run it with `ALC_PATCHES=60fps make boot`.
+
+### 2026-10-30: stage 4/5, MetalFX frame interpolation on Astral Chain — the TotK pipeline taught this game's frame
+
+The shared graphics layer carried the whole MetalFX frame-interpolation pipeline (totk_mfx.m: motion vectors from the
+G-buffer depth + a camera block, the FrameInterpolator, per-mode present pacing) — but every input hook was TotK-shaped
+and never fired for Astral Chain ("缺输入 画面/相机/深度/UI" on every frame). Four adapters later it runs end to end:
+
+- **Depth**: Astral Chain has no ≥3-colour G-buffer; it renders a depth-only pre-pass (nc==0) and single-colour lighting
+  passes testing LEQUAL against it. The pre-pass depth (D24S8, which Apple GPUs run as Depth32Float_Stencil8) is fed to
+  the interpolator as-is — the FI descriptor now follows the actual format. A D32F *view* of D32S8 turned out to be not
+  viewable on this GPU (Metal validation aborts in newTextureViewWithPixelFormat, taking the process down), and
+  tex_upgrade_pfv does not help; the raw texture works because depth sampling is the same operation.
+- **Scene**: TotK ends the scene at the first UI-shader draw into its canvas. Astral Chain composites the float canvas
+  into the presented texture and draws UI on top of it there, so the boundary is the first draw into a presented
+  texture; the snapshot then copies the learned canvas (serial_get) instead of the pass's target. That composite draw
+  itself must not enter the UI layer (it IS the scene) — a one-shot role skip handles it.
+- **UI layer**: attachment 7 rides on the passes into the presented texture (after the snapshot), same premultiplied
+  PSO variants as TotK (fs_fn_mfx). Gate: only passes whose target is the presented texture **at the canvas
+  resolution**. The game also presents boot/intro movies at their own lower resolution directly, and an 800x450 UI
+  layer meant the mfx textures were recreated on every movie/menu switch — that churn took the GPU down
+  (kIOGPUCommandBufferCallbackErrorInnocentVictim from frame ~15 on, 6 log-MB of victims). Two guards: canvas_learn only
+  accepts a canvas near the presented size (≥90%), and a present whose size differs from the canvas aborts the
+  interpolation for that frame instead of showing a 1600x900 interpolated picture in place of an 800x450 movie frame.
+- **Camera**: the interpolation wants TotK's 84-float camera block; Astral Chain's depth pre-pass binds two row-major
+  4x4 in vertex uniform 0 (view, then projection; the view translation moves with the camera) and
+  near/far/tan(fovX/2)/tan(fovY/2) in uniform 13 (0.1, 9999.9, 0.828991, 0.466308 at boot). mfx_take_camera composes
+  the block: view rows, VP = P·V, the translation as position, aspect = tanX/tanY, fov = 2·atan(tanY).
+  ALC_MFX_UBODUMP=1 prints the binds once (the hunt that found this); TOTK_MFX_CAMLOG logs captures.
+
+**Pacing**: the present clock is fixed at 60 Hz (DM_PRESENT_HZ) while the display runs 120 Hz, and "half the refresh
+rate" was measured in present-clock ticks — it now means two display refreshes (the display rate is read live in
+present_period), and without the 60 FPS patch (game interval 2) half-rate falls back to 30+30, so the 1.0 step floor
+can never double the speed. The production-policy probe checks both shapes.
+
+**Verified** (live, 60 FPS patch + TOTK_MFX=interpmax + ALC_MFX_UI): the canvas is learned once (1600x900); 12 300+
+game frames with **99.3% of frames interpolated**, GPU cost 2.4–2.9 ms per interpolation; the present rhythm shows
+**600/600 interpolated pictures at p50/p95/max 16.67 ms on the 120 Hz display** (60 fps game + 60 interpolated);
+mode switches behave (30+30: 450/600 interpolated at 30 fps game; half-rate: 300/600 at 60 fps game; camera cuts
+reset history and skip, no stuck frames). Gameplay, HUD and the load-menu screens all render normally with the UI
+layer on; full screen (drawable 3024x1898) works — the MetalFX output upscaler path follows the window's drawable
+size (it engages when the drawable exceeds 1600x900; the transition itself paused the present for ~80 s once and the
+game set its interval 1 → 2 around the switch — rechecked with a real user's fullscreen pass, not scripted AX).
+
+**Launcher**: the settings window gains an "Interpolated frames" control (Off / 30+30 / Half the rate / Every frame,
+TOTK_MFX=interp30|interp|interpmax; off unless chosen, and ALC_MFX_UI follows the interpolation unless set). The
+Quality preset becomes "120 fps, full screen" (60 fps game, every frame interpolated); Original keeps 30+30.
+
+On the way: `pkill -f "^/path"` missed the running game (it was started as `./build/alc-native`, so the anchor never
+matched) and the single-instance slot made the next launch wait forever with its input script firing into the void —
+kill by pgrep pattern without the anchor; and grep on the active log file under-counts badly (a python line scan found
+33 232 pass lines where grep -c reported 0), so log analysis reads the file in python.
+
+**Open**: wshot (window screenshot) does not land while interpolation is on (to be looked at); the 30+30/half-rate
+modes on a 60 Hz display are TotK-verified paths but were not re-checked for this game; long-session soak with
+interpolation on the Prologue's heavier scenes.

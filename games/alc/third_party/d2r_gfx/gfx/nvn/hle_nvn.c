@@ -2802,9 +2802,12 @@ static unsigned present_ticks(const win_t *o) {   /* display ticks per game fram
     /* TOTK_MFX / key 2: MetalFX makes the frame between two game frames. Half the refresh rate: the game presents every
        second display tick (50 + 50 on a 100 Hz display); 30+30: hz / 30 ticks (2 at 60 Hz; at 100 Hz the own clock paces,
        mfx_own_clock). Held here and not only by the game's controller, because the code carries the 60 FPS patch (the
-       controller may choose 1); the real-time frame step keeps game speed right. Uncapped interpolation paces as uncapped. */
+       controller may choose 1); the real-time frame step keeps game speed right. Uncapped interpolation paces as uncapped.
+       Astral Chain: the present clock is fixed at 60 Hz (DM_PRESENT_HZ) while the display runs 120 Hz, so half-refresh
+       means the display's two ticks — and a game still pacing at interval 2 (no 60 FPS patch) must keep 30+30, or the
+       1.0 step floor would run it twice as fast. */
     int m = mfx_enabled();
-    if (m == MFX_HALF) return 2;
+    if (m == MFX_HALF) return o->interval > 1 ? (unsigned)(g_paced_hz >= 45 ? (g_paced_hz + 15) / 30 : 1) : 2;
     if (m == MFX_30) { int hz = g_paced_hz > 0 ? g_paced_hz : 60; return (unsigned)(hz >= 45 ? (hz + 15) / 30 : 1); }
     return g_display_mode || (uncapped_now() && !dm_detclock_enabled() && uncapped_interval_on()) || o->interval <= 0 ? 1u : (unsigned)o->interval;
 }
@@ -2816,6 +2819,14 @@ static uint64_t present_period(const win_t *o) {
                                     m == MFX_MAX ? (g_uncapped ? "补帧 不限帧：不限帧率，每帧补一帧" : "补帧 不限帧：按游戏的出图间隔，每帧补一帧") :
                                     g_uncapped ? "补帧关：不限帧率" : "补帧关：按游戏的出图间隔"); was = m; }
     if (m == MFX_30) return 1000000000ull / 30;   /* exactly 30 fps, by display ticks or by our own clock */
+    if (m == MFX_HALF) {   /* half-refresh is measured in display ticks: the game period is two display refreshes
+                              (16.67 ms game frames on the 120 Hz display, interpolated pictures in between), not two
+                              ticks of the fixed 60 Hz present clock. Without the 60 FPS patch (interval 2) the game
+                              keeps its 30 fps. */
+        if (o->interval > 1) return 1000000000ull / 30;
+        int scr = mtl_display_hz();
+        return scr > 0 ? 2 * 1000000000ull / (uint64_t)scr : 1000000000ull / 30;
+    }
     return hz > 0 ? (uint64_t)itv * 1000000000ull / (uint64_t)hz : 0;
 }
 /* Exercise production policy, including the shrine's interval=2 and the
@@ -2842,12 +2853,17 @@ void dm_nvn_probe_present_interval(void) {
     extern void mfx_set(int mode); extern int mfx_latch(void);
     int saved_paced = g_paced_hz, saved_mfx = mfx_enabled();
     mfx_set(MFX_HALF); if (!(neg && atoi(neg) == 20)) mfx_latch();
-    for (int uncapped = 0; uncapped < 2; uncapped++) for (int interval = -1; interval <= 3; interval++) {
+    { int scr = mtl_display_hz();
+      for (int uncapped = 0; uncapped < 2; uncapped++) for (int interval = -1; interval <= 3; interval++) {
         win_t w = {.interval = interval}; g_paced_hz = 100; g_hz = uncapped ? UNCAPPED_HZ : 100; g_display_mode = 0; g_uncapped = uncapped;
-        if (present_ticks(&w) != 2 || present_period(&w) != 2 * 1000000000ull / 100 || uncapped_now() || mfx_own_clock())
-            die("present interval probe: frame interpolation must pace two display ticks at the display rate");
+        /* Half-refresh is two display ticks at the display rate — but a game still at interval 2 (no 60 FPS patch) keeps
+           30+30, measured in ticks of its own 60 Hz base (g_paced_hz here). */
+        unsigned want_ticks = interval > 1 ? (unsigned)(g_paced_hz >= 45 ? (g_paced_hz + 15) / 30 : 1) : 2;
+        uint64_t want_period = interval > 1 ? 1000000000ull / 30 : scr > 0 ? 2 * 1000000000ull / (uint64_t)scr : 1000000000ull / 30;
+        if (present_ticks(&w) != want_ticks || present_period(&w) != want_period || uncapped_now() || mfx_own_clock())
+            die("present interval probe: frame interpolation must pace half the display rate (30+30 without the 60 FPS patch)");
         checked++;
-    }
+    } }
     mfx_set(MFX_30); mfx_latch();
     const int rates[] = {60, 100, 120, 144}; const unsigned ticks30[] = {2, 3, 4, 5};
     for (int r = 0; r < 4; r++) for (int uncapped = 0; uncapped < 2; uncapped++) {

@@ -21,14 +21,15 @@
 static BOOL spanish(void) { return [NSLocale.preferredLanguages.firstObject hasPrefix:@"es"]; }
 #define T(es, en) (spanish() ? @es : @en)
 
-/* output: 0 = the monitor's native pixels, else the height of a 16:9 output (2160, 1440, 1080, 900). */
-typedef struct { const char *name_es, *name_en; int fps, fixed900, fullscreen, metalfx, output, lod, nograin, size; } Preset;
+/* output: 0 = the monitor's native pixels, else the height of a 16:9 output (2160, 1440, 1080, 900).
+   interp: MetalFX frame interpolation, 0 = off, 1 = 30+30, 2 = half the refresh rate, 3 = every frame interpolated. */
+typedef struct { const char *name_es, *name_en; int fps, fixed900, fullscreen, metalfx, output, lod, nograin, size, interp; } Preset;
 static const Preset presets[] = {
-    {"Original (30 fps, como en la consola)", "Original (30 fps, as on the console)", 30, 0, 0, 0, 0, 0, 0, 2},
-    {"Recomendado (60 fps, ventana)", "Recommended (60 fps, window)", 60, 0, 0, 1, 0, 0, 0, 2},
-    {"Rendimiento (60 fps, 900p fija)", "Performance (60 fps, fixed 900p)", 60, 1, 0, 1, 0, 0, 0, 2},
-    {"Calidad (60 fps, pantalla completa, MetalFX nativo, sin grano)", "Quality (60 fps, full screen, native MetalFX, no grain)", 60, 1, 1, 1, 0, 0, 1, 2},
-    {"Monitor rápido (120 fps experimental, pantalla completa, MetalFX)", "Fast monitor (120 fps experimental, full screen, MetalFX)", 120, 1, 1, 1, 0, 0, 1, 2},
+    {"Original (30 fps, como en la consola)", "Original (30 fps, as on the console)", 30, 0, 0, 0, 0, 0, 0, 2, 1},
+    {"Recomendado (60 fps, ventana)", "Recommended (60 fps, window)", 60, 0, 0, 1, 0, 0, 0, 2, 0},
+    {"Rendimiento (60 fps, 900p fija)", "Performance (60 fps, fixed 900p)", 60, 1, 0, 1, 0, 0, 0, 2, 0},
+    {"Calidad (120 fps, pantalla completa, MetalFX, sin grano)", "Quality (120 fps, full screen, MetalFX, no grain)", 60, 1, 1, 1, 0, 0, 1, 2, 3},
+    {"Monitor rápido (120 fps experimental, pantalla completa, MetalFX)", "Fast monitor (120 fps experimental, full screen, MetalFX)", 120, 1, 1, 1, 0, 0, 1, 2, 3},
 };
 enum { NPRESETS = sizeof presets / sizeof *presets };
 static const int fps_values[] = {30, 60, 120};
@@ -57,7 +58,7 @@ static NSString *screen_name(NSScreen *s) { return s.localizedName ?: @"?"; }
 @interface Launcher : NSObject <NSApplicationDelegate, NSWindowDelegate>
 @property NSWindow *window;
 @property NSPopUpButton *preset, *size, *internal, *monitor, *output, *mod;
-@property NSSegmentedControl *fps, *display, *scaler;
+@property NSSegmentedControl *fps, *display, *scaler, *interp;
 @property NSButton *lod, *grain, *hud, *play; @property NSTextField *note;
 @property NSArray<NSString *> *mods; @property BOOL applying, launch;
 @end
@@ -88,6 +89,7 @@ static NSString *screen_name(NSScreen *s) { return s.localizedName ?: @"?"; }
     self.size = [self popup:sizeTitles];
     self.output = [NSPopUpButton new]; self.output.target = self; self.output.action = @selector(changed:);
     self.scaler = [self segments:@[T("MetalFX (más nítido)", "MetalFX (sharper)"), T("Normal", "Plain")]];
+    self.interp = [self segments:@[T("No", "Off"), @"30+30", T("Mitad de la frecuencia", "Half the rate"), T("Cada fotograma", "Every frame")]];
     self.lod = [NSButton checkboxWithTitle:T("LOD mejorado (más detalle a distancia)", "Improved LOD (more distant detail)") target:self action:@selector(changed:)];
     self.grain = [NSButton checkboxWithTitle:T("Quitar el grano de película", "Remove film grain") target:self action:@selector(changed:)];
     self.mod = [self popup:@[T("Ninguno", "None")]]; self.mods = romfs_mods(); [self.mod addItemsWithTitles:self.mods];
@@ -105,6 +107,7 @@ static NSString *screen_name(NSScreen *s) { return s.localizedName ?: @"?"; }
         @[[self label:T("Tamaño de la ventana", "Window size")], self.size],
         @[[self label:T("Resolución de salida", "Output resolution")], self.output],
         @[[self label:T("Escalado", "Scaling")], self.scaler],
+        @[[self label:T("Fotogramas interpolados", "Interpolated frames")], self.interp],
         @[[self label:T("Mejoras", "Extras")], self.lod],
         @[NSGridCell.emptyContentView, self.grain],
         @[[self label:T("Mod de interfaz", "Interface mod")], self.mod],
@@ -153,6 +156,7 @@ static NSString *screen_name(NSScreen *s) { return s.localizedName ?: @"?"; }
     [self.internal selectItemAtIndex:[d boolForKey:@"fixed900"]]; self.display.selectedSegment = [d boolForKey:@"fullscreen"];
     NSInteger s = [d objectForKey:@"size"] ? [d integerForKey:@"size"] : 2; [self.size selectItemAtIndex:s >= 0 && s < 4 ? s : 2];
     self.scaler.selectedSegment = [d objectForKey:@"metalfx"] && ![d boolForKey:@"metalfx"] ? 1 : 0;
+    { NSInteger ip = [d integerForKey:@"interp"]; self.interp.selectedSegment = ip >= 0 && ip <= 3 ? ip : 0; }
     [self fillOutputs:(int)[d integerForKey:@"output"]];
     self.lod.state = [d boolForKey:@"lod"]; self.grain.state = [d boolForKey:@"nograin"];
 }
@@ -161,6 +165,7 @@ static NSString *screen_name(NSScreen *s) { return s.localizedName ?: @"?"; }
     [self.preset selectItemAtIndex:i]; self.fps.selectedSegment = p->fps == 30 ? 0 : p->fps == 60 ? 1 : 2;
     [self.internal selectItemAtIndex:p->fixed900]; self.display.selectedSegment = p->fullscreen; [self.size selectItemAtIndex:p->size];
     self.scaler.selectedSegment = p->metalfx ? 0 : 1; [self fillOutputs:p->output];
+    self.interp.selectedSegment = p->interp;
     self.lod.state = p->lod; self.grain.state = p->nograin; self.applying = NO;
 }
 /* Every change is saved at once (and written to disk), so the next start shows the same choices. */
@@ -200,6 +205,7 @@ static NSString *screen_name(NSScreen *s) { return s.localizedName ?: @"?"; }
     [d setInteger:fps_values[self.fps.selectedSegment] forKey:@"fps"]; [d setBool:self.internal.indexOfSelectedItem == 1 forKey:@"fixed900"];
     [d setBool:self.display.selectedSegment == 1 forKey:@"fullscreen"]; [d setInteger:self.size.indexOfSelectedItem forKey:@"size"];
     [d setInteger:self.output.selectedItem.tag forKey:@"output"]; [d setBool:self.scaler.selectedSegment == 0 forKey:@"metalfx"];
+    [d setInteger:self.interp.indexOfSelectedItem forKey:@"interp"];
     [d setObject:screen_name(self.chosenScreen) forKey:@"monitor"];
     [d setBool:self.lod.state forKey:@"lod"]; [d setBool:self.grain.state forKey:@"nograin"]; [d setBool:self.hud.state forKey:@"hud"];
     if (self.mod.indexOfSelectedItem > 0) [d setObject:self.mods[self.mod.indexOfSelectedItem - 1] forKey:@"mod"]; else [d removeObjectForKey:@"mod"];
@@ -252,6 +258,10 @@ int main(int argc, char **argv) {
         NSInteger s = [d integerForKey:@"size"]; if (s < 0 || s > 3) s = 2;
         setenv("TOTK_WINDOW_SIZE", [NSString stringWithFormat:@"%dx%d", sizes[s][0], sizes[s][1]].UTF8String, 1);
         if (![d objectForKey:@"metalfx"] || [d boolForKey:@"metalfx"]) { setenv("TOTK_MFX_UPSCALE", "1", 1); setenv("TOTK_MFX_OUTPUT", "1", 1); }
+        { NSInteger ip = [d integerForKey:@"interp"];
+          if (ip == 1) setenv("TOTK_MFX", "interp30", 1);
+          else if (ip == 2) setenv("TOTK_MFX", "interp", 1);
+          else if (ip == 3) setenv("TOTK_MFX", "interpmax", 1); }
         if ([d objectForKey:@"hud"] && ![d boolForKey:@"hud"]) setenv("TOTK_FPS_OVERLAY", "0", 1); else setenv("ALC_HUD_RENDER", "1", 1);
         NSString *mod = [d stringForKey:@"mod"];
         if (mod && [romfs_mods() containsObject:mod]) setenv("TOTK_ROMFS_MODS", [mods_folder() stringByAppendingFormat:@"/%@/romfs", mod].fileSystemRepresentation, 1);
@@ -272,9 +282,9 @@ int main(int argc, char **argv) {
         NSString *log = [logs stringByAppendingPathComponent:@"alc.log"], *prev = [logs stringByAppendingPathComponent:@"alc.previous.log"];
         [NSFileManager.defaultManager removeItemAtPath:prev error:nil]; [NSFileManager.defaultManager moveItemAtPath:log toPath:prev error:nil];
         FILE *lf = fopen(log.fileSystemRepresentation, "w"); if (lf) { dup2(fileno(lf), STDOUT_FILENO); dup2(fileno(lf), STDERR_FILENO); fclose(lf); }
-        fprintf(stderr, "[launcher] work %s, patches %s, present %s Hz, display %s, fullscreen %s, window %s, drawable scale %s, MetalFX %s, mod %s\n",
+        fprintf(stderr, "[launcher] work %s, patches %s, present %s Hz, display %s, fullscreen %s, window %s, drawable scale %s, MetalFX %s, interp %s, mod %s\n",
                 work.UTF8String, getenv("ALC_PATCHES"), getenv("DM_PRESENT_HZ"), getenv("ALC_DISPLAY"), full ? "yes" : "no", getenv("TOTK_WINDOW_SIZE"),
-                getenv("TOTK_DRAWABLE_SCALE") ?: "1", getenv("TOTK_MFX_OUTPUT") ? "on" : "off", getenv("TOTK_ROMFS_MODS"));
+                getenv("TOTK_DRAWABLE_SCALE") ?: "1", getenv("TOTK_MFX_OUTPUT") ? "on" : "off", getenv("TOTK_MFX") ?: "-", getenv("TOTK_ROMFS_MODS"));
         NSString *binary = [work stringByAppendingPathComponent:@"build/alc-native"];
         char *const args[] = {(char *)binary.fileSystemRepresentation, "rewritten/v101", "boot", NULL};
         execv(args[0], args);

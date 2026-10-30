@@ -31,6 +31,7 @@ static struct {
     id<MTLDevice> dev;
     id<MTL4FXFrameInterpolator> fi;
     NSUInteger in_w, in_h, out_w, out_h; MTLPixelFormat scene_fmt;
+    MTLPixelFormat depth_fmt;      // Astral Chain's D24S8 runs as Depth32Float_Stencil8; TotK's G-buffer is D32F
     id<MTLTexture> scene[2], ui, mv, out[MFX_OUT], outv[MFX_OUT];
     id<MTLResidencySet> rs;
     id<MTLComputePipelineState> mv_ps;
@@ -151,7 +152,11 @@ id<MTLTexture> mfx_scene_target(id<MTLDevice> dev, NSUInteger w, NSUInteger h, M
 id<MTLTexture> mfx_ui_target(id<MTLDevice> dev, NSUInteger w, NSUInteger h) { ensure_out(dev, w, h, 0); return g.ui; }
 id<MTLResidencySet> mfx_residency(void) { return g.rs; }
 void mfx_note_scene(void) { g.scene_ok = 1; }
-void mfx_note_depth(id<MTLTexture> d) { if (d && d.pixelFormat == MTLPixelFormatDepth32Float && d.textureType == MTLTextureType2D) g.depth = d; }
+void mfx_note_depth(id<MTLTexture> d) {
+    if (!d || d.textureType != MTLTextureType2D) return;
+    if (d.pixelFormat != MTLPixelFormatDepth32Float && d.pixelFormat != MTLPixelFormatDepth32Float_Stencil8) return;
+    g.depth = d; g.depth_fmt = d.pixelFormat;
+}
 void mfx_note_camera(const float *c, int n) {
     if (n < 84) return;
     for (int i = 0; i < 84; i++) g.cam[i] = c[i];
@@ -165,7 +170,7 @@ static void ensure_fi(NSUInteger iw, NSUInteger ih) {
     if (!g.fi) {
         MTLFXFrameInterpolatorDescriptor *d = [MTLFXFrameInterpolatorDescriptor new];
         d.colorTextureFormat = g.scene_fmt; d.outputTextureFormat = MTLPixelFormatRGBA8Unorm_sRGB;
-        d.depthTextureFormat = MTLPixelFormatDepth32Float; d.motionTextureFormat = MTLPixelFormatRG16Float; d.uiTextureFormat = MTLPixelFormatRGBA16Float;
+        d.depthTextureFormat = g.depth_fmt ? g.depth_fmt : MTLPixelFormatDepth32Float; d.motionTextureFormat = MTLPixelFormatRG16Float; d.uiTextureFormat = MTLPixelFormatRGBA16Float;
         d.inputWidth = iw; d.inputHeight = ih; d.outputWidth = g.out_w; d.outputHeight = g.out_h;
         id<MTL4Compiler> comp = [g.dev newCompilerWithDescriptor:[MTL4CompilerDescriptor new] error:&e];
         if (!comp) MDIE("MTL4 compiler: %s", e.localizedDescription.UTF8String);
