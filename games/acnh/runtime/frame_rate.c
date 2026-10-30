@@ -97,10 +97,9 @@ int runtime_frame_rate_choose(int value) {
  * 60 Hz in both modes; doubling VI notifications repeats incomplete pictures. */
 unsigned runtime_present_interval(unsigned interval) {
     if (runtime_frame_rate_active() == 60) return 1;
-#if ACNH_VERSION_RAW == 2097152
-    /* A 30 FPS ceiling also covers a scene asking to present every refresh. */
-    if (interval < 2) return 2;
-#endif
+    /* The selectable 30 FPS lock also covers a scene asking to present every
+     * refresh. Builds without the selector keep the game's own interval. */
+    if (fps_available && interval < 2) return 2;
     return interval;
 }
 

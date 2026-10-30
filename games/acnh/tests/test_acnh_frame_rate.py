@@ -7,7 +7,7 @@ import subprocess
 import tempfile
 import unittest
 
-from games.acnh.tools.prepare_fps import apply_ips, parse_pchtxt
+from games.acnh.tools.prepare_fps import apply_ips, check_replacement, parse_pchtxt
 
 GAME = Path(__file__).resolve().parents[1]
 
@@ -29,6 +29,16 @@ class InputTests(unittest.TestCase):
             with self.subTest(text=bad), self.assertRaises(ValueError):
                 parse_pchtxt(bad, bid)
 
+    def test_replacements_obey_rewriter_rules(self):
+        original = bytes(64)
+        rewritten = original[:32] + b"\x01\x00\x00\x14" + original[36:]   # word 32 became a gate branch
+        check_replacement(0, 0xD503201F, original, rewritten, 64)        # nop
+        check_replacement(0, 0x52800308, original, rewritten, 64)        # mov w8, #0x18 is not x18
+        check_replacement(0, 0x14000004, original, rewritten, 64)        # b +16 into original code
+        check_replacement(80, 0xD4000001, original, rewritten, 64)       # data words are not executed
+        for word in (0xD4000001, 0xD53BD040, 0xD51BD040, 0xD53BE020, 0xAA1203E0, 0x14000008, 0x14000040):
+            with self.subTest(word=hex(word)), self.assertRaises(ValueError):
+                check_replacement(0, word, original, rewritten, 64)
 
 @unittest.skipUnless(shutil.which("xcrun"), "needs the Xcode command line tools")
 class RuntimeTests(unittest.TestCase):
@@ -91,14 +101,14 @@ class RuntimeTests(unittest.TestCase):
         self.run_probe(30)
         self.settings.write_text("60\n")
         self.env.pop("ACNH_FPS_ASSETS")
-        self.run_probe(30)
+        self.run_probe(30, "unlocked")
         self.env["ACNH_FPS"] = "120"
         self.assertIn("must be 30 or 60", self.run_probe(30, expected=77).stderr)
 
     def test_121_never_installs_301_corrections(self):
         self.compile(458752)
         self.settings.write_text("60\n")
-        self.run_probe(30)
+        self.run_probe(30, "unlocked")
 
 
 if __name__ == "__main__":

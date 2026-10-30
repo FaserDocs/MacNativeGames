@@ -34,6 +34,35 @@ static int same_file(const struct stat *a, const struct stat *b) {
         && a->st_mtimespec.tv_sec == b->st_mtimespec.tv_sec && a->st_mtimespec.tv_nsec == b->st_mtimespec.tv_nsec
         && a->st_ctimespec.tv_sec == b->st_ctimespec.tv_sec && a->st_ctimespec.tv_nsec == b->st_ctimespec.tv_nsec;
 }
+#if ACNH_DLC_COUNT
+/* As for the base RomFS (romfs.c): a full hash is reused only while the same regular
+ * file keeps its identity and modification metadata. TOTK_ROMFS_VERIFY=full forces one. */
+typedef struct { char magic[16], sha256[65]; uint64_t dev, ino, size; struct timespec mtime, ctime, birth; } DlcProof;
+static DlcProof proof_for(const struct stat *s, const char *sha256) {
+    DlcProof p; memset(&p, 0, sizeof p); memcpy(p.magic, "ACNHDLC-PROOF-1", 16); snprintf(p.sha256, sizeof p.sha256, "%s", sha256);
+    p.dev = (uint64_t)s->st_dev; p.ino = (uint64_t)s->st_ino; p.size = (uint64_t)s->st_size;
+    p.mtime = s->st_mtimespec; p.ctime = s->st_ctimespec; p.birth = s->st_birthtimespec;
+    return p;
+}
+static int proof_path(char path[4096], const char *title) {
+    const char *dir = getenv("TOTK_ROMFS_PROOF_DIR");
+    return dir && *dir && snprintf(path, 4096, "%s/.dlc-verified-%s-v1", dir, title) < 4096;
+}
+static int proof_reusable(const char *title, const DlcProof *want) {
+    const char *force = getenv("TOTK_ROMFS_VERIFY"); char path[4096]; DlcProof saved; struct stat st;
+    if ((force && !strcmp(force, "full")) || !proof_path(path, title)) return 0;
+    int fd = open(path, O_RDONLY | O_NOFOLLOW | O_CLOEXEC); if (fd < 0) return 0;
+    int ok = !fstat(fd, &st) && S_ISREG(st.st_mode) && st.st_size == sizeof saved && read(fd, &saved, sizeof saved) == sizeof saved;
+    close(fd); return ok && !memcmp(&saved, want, sizeof saved);
+}
+static void proof_save(const char *title, const DlcProof *proof) {
+    char path[4096], tmp[4200]; if (!proof_path(path, title)) return;
+    if (snprintf(tmp, sizeof tmp, "%s.%ld.tmp", path, (long)getpid()) >= (int)sizeof tmp) return;
+    int fd = open(tmp, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0600); if (fd < 0) return;
+    int ok = write(fd, proof, sizeof *proof) == (ssize_t)sizeof *proof && !fsync(fd); close(fd);
+    if (!ok || rename(tmp, path)) unlink(tmp);
+}
+#endif
 static void init(void) {
 #if ACNH_DLC_COUNT
     const char *dir = getenv("ACNH_DLC_DIR"); if (!dir) dir = ACNH_DLC_DEFAULT_DIR;
@@ -44,6 +73,12 @@ static void init(void) {
         int fd = open(path, O_RDONLY | O_NOFOLLOW | O_CLOEXEC); struct stat before, after;
         if (fd < 0) { fprintf(stderr, "[acnh] missing DLC image: %s\n", path); runtime_fail("DLC image missing"); }
         need(!fstat(fd, &before) && S_ISREG(before.st_mode) && (uint64_t)before.st_size == image->size, "DLC image size/type");
+        DlcProof want = proof_for(&before, image->sha256);
+        if (proof_reusable(image->title, &want)) {
+            image_fds[i] = fd; image_stats[i] = before;
+            fprintf(stderr, "[acnh] DLC unchanged; reused full SHA256 verification record: %s index=%d files=%zu\n", image->title, image->index, image->count);
+            continue;
+        }
         CC_SHA256_CTX hash; CC_SHA256_Init(&hash);
         for (uint64_t pos = 0; pos < image->size;) {
             size_t size = image->size - pos > (8u << 20) ? (8u << 20) : (size_t)(image->size - pos);
@@ -54,7 +89,7 @@ static void init(void) {
         for (unsigned j = 0; j < 32; j++) snprintf(hex + j * 2, 3, "%02x", digest[j]);
         need(!strcmp(hex, image->sha256), "DLC image SHA-256 mismatch");
         need(!fstat(fd, &after) && same_file(&before, &after), "DLC image changed during verification");
-        image_fds[i] = fd; image_stats[i] = after;
+        image_fds[i] = fd; image_stats[i] = after; proof_save(image->title, &want);
         fprintf(stderr, "[acnh] DLC verified: %s index=%d files=%zu\n", image->title, image->index, image->count);
     }
     free(buffer);

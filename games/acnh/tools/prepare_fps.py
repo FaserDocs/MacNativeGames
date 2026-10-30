@@ -97,6 +97,37 @@ def parse_pchtxt(text, build_id):
     return sorted(words.items())
 
 
+# Words the instruction rewriter gates (third_party/d2r/patch_nso.py); a replacement
+# must not introduce one after rewriting, or it would run ungated.
+SYSTEM_MASK, SVC_MASK = 0xFFD00000, 0xFFE0001F
+BRANCHES = {"b", "bl", "cbz", "cbnz", "tbz", "tbnz"}
+
+
+def check_replacement(offset, word, original, rewritten, text_end):
+    """Reject a text-segment replacement the rewriter would have gated or that branches into gated code."""
+    if offset >= text_end:
+        return
+    require(word & SVC_MASK != 0xD4000001 and word & SYSTEM_MASK != 0xD5100000,
+            f"FPS patch at {offset:#x} introduces a gated svc/system-register instruction")
+    import capstone
+    ins = next(capstone.Cs(capstone.CS_ARCH_ARM64, capstone.CS_MODE_ARM).disasm(word.to_bytes(4, "little"), offset), None)
+    if ins is None:
+        return
+    require(re.search(r"\b[xw]18\b", ins.op_str) is None, f"FPS patch at {offset:#x} uses the reserved x18 register")
+    if ins.mnemonic in BRANCHES or ins.mnemonic.startswith("b."):
+        target = int(ins.op_str.rsplit("#", 1)[1], 0)
+        require(0 <= target < text_end and target % 4 == 0
+                and rewritten[target:target + 4] == original[target:target + 4],
+                f"FPS patch at {offset:#x} branches outside the text segment or into rewritten code")
+
+
+def text_end(path):
+    raw = path.read_bytes()
+    require(raw[:4] == b"NSO0", "Expected original NSO")
+    _, address, size, _ = struct.unpack_from("<IIII", raw, 0x10)
+    return address + size
+
+
 def original_image(path):
     raw = path.read_bytes()
     require(raw[:4] == b"NSO0", "Expected original NSO")
@@ -149,11 +180,12 @@ def prepare_fps(prepared, work, source):
     main = next(m for m in profile["modules"] if m["name"] == "main")
     words = parse_pchtxt((source / (MOD + "exefs/speedfix_main_301.pchtxt")).read_text(), main["build_id"])
     require(len(words) == 6417, "Unexpected SpeedFix patch count")
-    lines = ["MNG_ACNH_FPS1"]
+    lines, code_end = ["MNG_ACNH_FPS1"], text_end(original_path)
     for offset, value in words:
         require(offset + 4 <= len(image), "FPS patch outside original module")
         before = bytes(image[offset:offset + 4])
         require(rewritten[offset:offset + 4] == before, "FPS patch overlaps an instruction-rewriter gate")
+        check_replacement(offset, int.from_bytes(value, "little"), image, rewritten, code_end)
         lines.append(f"{offset:x} {int.from_bytes(before, 'little'):08x} {int.from_bytes(value, 'little'):08x}")
 
     dest = work / "build/fps60"

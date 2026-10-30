@@ -43,6 +43,24 @@ class DlcAssetTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'manifest differs'):
                 prepare_dlc.verify_assets(root)
 
+    def test_any_pinned_subset_in_pinned_order(self):
+        rows = [dict(title_id=f'01006F80023271{i:02X}', index=i, romfs_size=0, romfs_sha256='', file_count=0)
+                for i in range(3)]
+        pins = dict(title_id='01006F8002326000', entries=rows)
+        with tempfile.TemporaryDirectory() as temporary, patch.object(prepare_dlc, 'pins', return_value=pins), \
+                patch.object(prepare_dlc, 'verified_file'), patch.object(prepare_dlc, 'index_romfs', return_value=[]):
+            root = Path(temporary)
+            for row in rows:
+                (root / f'{row["title_id"]}.romfs').write_bytes(b'')
+            for chosen, ok in (([rows[2]], True), ([rows[0], rows[2]], True), ([rows[2], rows[0]], False),
+                               ([], False), ([rows[1], rows[1]], False), ([dict(rows[1], index=9)], False)):
+                with self.subTest(chosen=[row['index'] for row in chosen]):
+                    (root / 'manifest.json').write_text(json.dumps(dict(schema=1, title_id=pins['title_id'], entries=chosen)))
+                    if ok:
+                        self.assertEqual(prepare_dlc.verify_assets(root)[0]['entries'], chosen)
+                    else:
+                        with self.assertRaisesRegex(ValueError, 'manifest differs'):
+                            prepare_dlc.verify_assets(root)
 
 class DlcRuntimeTests(unittest.TestCase):
     def test_mounts_bounds_missing_images_and_mutation(self):
@@ -107,6 +125,15 @@ int main(int argc,char **argv) {
                 run = subprocess.run([str(binary), mode], env=env, capture_output=True, text=True)
                 self.assertEqual(run.returncode, expected, run.stderr)
                 self.assertIn(message, run.stderr)
+            # A full hash is recorded, reused while the image is unchanged, and redone after an edit.
+            (root / 'first.romfs').write_bytes(b'0abc9'); (root / 'proofs').mkdir()
+            env['TOTK_ROMFS_PROOF_DIR'] = str(root / 'proofs')
+            for reused in (False, True):
+                run = subprocess.run([str(binary), 'normal'], env=env, capture_output=True, text=True)
+                self.assertEqual(run.returncode, 0, run.stderr)
+                self.assertEqual('reused full SHA256' in run.stderr, reused, run.stderr)
+            forced = subprocess.run([str(binary), 'normal'], env=dict(env, TOTK_ROMFS_VERIFY='full'), capture_output=True, text=True)
+            self.assertEqual(forced.returncode, 0, forced.stderr); self.assertNotIn('reused', forced.stderr)
             (root / 'first.romfs').write_bytes(b'0abc8')
             corrupt = subprocess.run([str(binary), 'normal'], env=env, capture_output=True, text=True)
             self.assertEqual(corrupt.returncode, 77)

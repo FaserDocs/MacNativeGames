@@ -35,7 +35,9 @@ int main(int argc, char **argv) {
     Module m = {.name="main", .file_size=sizeof image, .key_off=sizeof image, .base=(void *)image};
     if (runtime_frame_rate_active() != want || runtime_frame_rate_choice() != want) return 2;
     if (runtime_present_interval(2) != (want == 60 ? 1u : 2u)) return 3;
-    unsigned one = want == 60 || ACNH_VERSION_RAW != 2097152 ? 1u : 2u;
+    /* Only a build offering the selector locks 30 FPS; others keep the game's interval. */
+    unsigned one = want == 60 || !runtime_frame_rate_available() ? 1u : 2u;
+    if (!strcmp(argv[2], "unlocked") && one != 1u) return 10;
     if (runtime_present_interval(1) != one || runtime_present_interval(3) != (want == 60 ? 1u : 3u)) return 9;
     runtime_frame_rate_install(&m);
     if (image[0] != (want == 60 ? 10u : 1u) || image[2] != (want == 60 ? 30u : 3u)) return 4;

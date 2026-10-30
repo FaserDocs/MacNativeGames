@@ -74,12 +74,13 @@ The launcher keeps writable caches, verification proofs and game locks beside
 the app under `Animal Crossing Data`, preserving the signed app resources.
 No DMG or installation is performed by these commands.
 
-### Optional three DLCs for 3.0.1
+### Optional DLCs for 3.0.1
 
-The optional DLC set contains **Pocket Camp Special Order Ticket** (`01006F800232712C`,
+Three DLCs are pinned: **Pocket Camp Special Order Ticket** (`01006F800232712C`,
 index 300), **Nook Inc. Silk Rug** (`01006F800232712D`, index 301), and **Happy Home
-Paradise** (`01006F80023273E8`, index 1000), all version 0. Supply the owner's three
-separate NSPs; no game content is distributed with the source. The preparer checks
+Paradise** (`01006F80023273E8`, index 1000), all version 0. Supply any of the owner's
+separate NSPs (one `--source` each); the others are simply absent. No game content is
+distributed with the source. The preparer checks
 their exact package hashes, AddOnContent CNMT type/version/application identity,
 FS headers and all six IVFC levels against `assets/expected-dlc-v0.json`.
 
@@ -93,10 +94,13 @@ build/acnh-3.0.1/work/venv/bin/python -B games/acnh/tools/prepare_dlc.py \
 
 Reuse this verified output on subsequent builds. Add `--dlc build/acnh-3.0.1/work/dlc`
 to the `build_host.py` command above, then repackage. The native work folder remembers
-the DLC path. Builds in a new work folder without this option report zero DLCs.
-The packager refuses a runtime built for a different DLC manifest and bundles all
-three read-only images. The runtime rechecks their full hashes, enumerates the actual
-DLC indices and serves file slices from each mounted image. The base/update RomFS
+the DLC path; `--no-dlc` forgets it. Builds in a new work folder without this option
+report zero DLCs. The packager refuses a runtime built for a different DLC manifest and
+bundles every prepared read-only image. The runtime checks each image's full hash, keeps
+a verification record under `Animal Crossing Data` and reuses it while the image file is
+unchanged (as for the base RomFS; `TOTK_ROMFS_VERIFY=full` forces a new hash), enumerates
+the actual DLC indices and serves file slices from each mounted image. A missing or
+changed image stops the launch rather than hiding content a save may need. The base/update RomFS
 and existing saves remain separate from the DLC images.
 
 To check the packaged runtime without launching gameplay:
@@ -107,7 +111,7 @@ ACNH_DLC_DIR="$PWD/build/acnh-3.0.1/Animal Crossing New Horizons.app/Contents/Re
   "build/acnh-3.0.1/Animal Crossing New Horizons.app/Contents/Resources/game/rewritten" probe-dlc
 ```
 
-This probe checks all 1,173 DLC file slices, guest-facing enumeration/mount/cache
+With all three DLCs this probe checks all 1,173 DLC file slices, guest-facing enumeration/mount/cache
 queries, size/read/EOF behavior, write rejection and traversal rejection. It does
 not establish that Happy Home Paradise or the promotional rewards work in gameplay;
 3.0.1 and its DLC support remain experimental.
@@ -135,15 +139,18 @@ Add this option to the 3.0.1 `build_host.py` command above, then repackage:
 --fps-mod game-assets/animal-crossing-new-horizons/mods/v3.0.1/acnh-60fps-source
 ```
 
-The work folder remembers this input for subsequent rebuilds. The builder checks
+The work folder remembers this input for subsequent rebuilds; `--no-fps-mod` forgets it. The builder checks
 the six source-file hashes, the original NSO and RomFS identities and all 6,417
 patch sites against the original and rewritten main module. It derives a separate
 parameter overlay from the owner's files, verifies its result, and packages both
 the complete speed corrections and the original license/attribution. On a 60 FPS
 launch the loader rechecks every original word before changing any of them, then
 seals executable memory before the game starts. Original NSOs, rewritten files,
-RomFS and saves are not patched on disk. Builds without these inputs, including
-1.2.1, retain 30 FPS.
+RomFS and saves are not patched on disk. The builder also rejects any replacement
+that the instruction rewriter would have gated (`svc`, system-register access, x18)
+or that branches outside the code or into rewritten code. Selecting 30 FPS locks
+presentation at 30; builds without these inputs, including 1.2.1, keep the game's own
+presentation interval and timing.
 
 For isolated diagnostics, `ACNH_FPS=30|60` overrides the saved choice and locks
 the panel's row; a standalone native run also needs `ACNH_FPS_ASSETS` set to the

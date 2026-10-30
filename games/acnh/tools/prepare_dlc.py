@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Verify and prepare the three pinned, owner-supplied ACNH add-on packages."""
+"""Verify and prepare any of the pinned, owner-supplied ACNH add-on packages."""
 import argparse
 import json
 from pathlib import Path
@@ -26,9 +26,13 @@ def verify_assets(folder):
     expected = pins()
     verified_file(folder / "manifest.json")
     manifest = json.loads((folder / "manifest.json").read_text())
-    if (manifest.get("schema") != 1 or manifest.get("title_id") != expected["title_id"]
-            or manifest.get("entries") != expected["entries"]):
-        raise ValueError("DLC manifest differs from the three pinned add-ons")
+    entries = manifest.get("entries")
+    ids = [row.get("title_id") for row in entries] if isinstance(entries, list) and all(isinstance(row, dict) for row in entries) else None
+    # Any non-empty subset of the pinned add-ons, each row exactly as pinned and in pinned order.
+    if (manifest.get("schema") != 1 or manifest.get("title_id") != expected["title_id"] or not ids
+            or len(set(ids)) != len(ids)
+            or entries != [row for row in expected["entries"] if row["title_id"] in ids]):
+        raise ValueError("DLC manifest differs from the pinned add-ons")
     files = []
     for row in manifest["entries"]:
         image = folder / f'{row["title_id"]}.romfs'
@@ -89,11 +93,12 @@ def prepare(sources, keys_path, output):
                     or cnmt['cnmt_version_raw'] != row['version_raw']):
                 raise ValueError("DLC CNMT version/application differs")
         selected[digest] = source
-    if selected.keys() != wanted.keys():
-        raise ValueError("Provide exactly the three pinned DLC packages")
+    chosen = [row for row in expected['entries'] if row['source_sha256'] in selected]
+    if not chosen:
+        raise ValueError("Provide at least one pinned DLC package")
     output.mkdir(parents=True)
     provenance = []
-    for row in expected['entries']:
+    for row in chosen:
         source = selected[row['source_sha256']]
         with tempfile.TemporaryDirectory(dir=output) as temp:
             extracted = Path(temp) / 'extracted'
@@ -104,11 +109,11 @@ def prepare(sources, keys_path, output):
         verified_file(source, row['source_sha256'])
         provenance.append({'path': str(source), 'sha256': row['source_sha256'], 'title_id': row['title_id']})
     (output / 'manifest.json').write_text(json.dumps({'schema': 1, 'title_id': expected['title_id'],
-                                                    'entries': expected['entries']}, indent=2) + '\n')
+                                                    'entries': chosen}, indent=2) + '\n')
     verify_assets(output)
     (output / 'provenance.json').write_text(json.dumps({'sources': provenance,
         'integrity': 'Pinned NSP SHA-256, CNMT hash chains, FS headers and all six IVFC levels verified; RSA not checked'}, indent=2) + '\n')
-    print(f'Prepared and verified three DLCs: {output}')
+    print(f'Prepared and verified {len(chosen)} DLC(s): {output}')
 
 
 def main():
