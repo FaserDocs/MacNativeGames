@@ -712,20 +712,15 @@ uint64_t dm_mtl_l3_sample(uint32_t tick) {
 }
 
 static _Atomic uint64_t g_reg_gen = 1;   // 内存池 / 贴图 / 采样器登记的变更代号：参数缓冲复用以它为失效条件之一 | Change generation of memory pool / texture / sampler registration: one of the invalidation conditions for argument buffer reuse
-/* TOTK safety guard: twice a full-game run kernel-panicked macOS inside IOGPUFamily right after the driver returned
-   kIOReturnNoMemory. A zero-copy buffer makes the whole range resident, so ranges with inaccessible pages (sparse
-   virtual pools) or very large ranges are refused here, with details, instead of being handed to the driver. */
+/* TOTK: a zero-copy buffer makes the whole range resident, so ranges with unmapped holes or pages that are not
+   read-write (sparse virtual pools) are refused here, with details, instead of being handed to the driver. There is no
+   size limit (2026-10-30, the user: "做真 4K 根本方案"): the 1 GiB one came from the hypothesis that a huge zero-copy
+   pool caused the IOGPUFamily kernel panics of 2026-10-12; the panics went on with it in place and it never triggered,
+   and their cause was GPU memory leaks that wired ~15 GB (fixed 2026-10-13; Tears of the Kingdom
+   native-port/docs/gpu-kernel-panic.md). A 3.8 GiB pool (a 4K texture pack, TOTK_DRAM_8GB) has run as one buffer since,
+   and a 3840x2160 scene's heaps need a 1,490 MiB one at the start. */
 #include "mach_vm_compat.h"
-/* TOTK_DRAM_8GB (the 8 GB pool for big texture packs, whose TextureHeap pool is ~3.8 GiB): 4 GiB. Read once. */
-static uint64_t pool_buffer_max(void) {
-    static uint64_t v;
-    if (!v) { const char *e = getenv("TOTK_DRAM_8GB"); v = e && *e && strcmp(e, "0") ? 4ull << 30 : 1ull << 30; }
-    return v;
-}
-#define POOL_BUFFER_MAX pool_buffer_max()
 static void pool_range_check(uintptr_t a, uintptr_t b, const void *mem, uint64_t size) {
-    if (b - a > POOL_BUFFER_MAX) MDIE("memory pool %p+%#llx: %llu MiB zero-copy GPU buffer refused (limit %llu MiB)", mem, (unsigned long long)size,
-                                      (unsigned long long)((b - a) >> 20), POOL_BUFFER_MAX >> 20);
     for (mach_vm_address_t at = a; at < b;) {
         mach_vm_address_t ra = at; mach_vm_size_t rs = 0; vm_region_basic_info_data_64_t ri; mach_msg_type_number_t rc = VM_REGION_BASIC_INFO_COUNT_64; mach_port_t ro = MACH_PORT_NULL;
         if (mach_vm_region(mach_task_self(), &ra, &rs, VM_REGION_BASIC_INFO_64, (vm_region_info_t)&ri, &rc, &ro) != KERN_SUCCESS || ra > at)
