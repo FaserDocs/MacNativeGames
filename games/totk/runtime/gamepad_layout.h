@@ -102,7 +102,7 @@ static inline uint64_t gamepad_face_bits(int bottom, int right, int left, int to
    Which button usage is which. GAMEPAD_HID_GENERIC is the order the reader always used: B 1, A 2, Y 4, X 5, L 7, R 8,
    ZL 9, ZR 10, minus 11, plus 12, L3 14, R3 15. A pad that names itself "... Pro Controller" (Nintendo's own is left to
    GameController) sends a Switch Pro Controller's simple report instead: B A Y X L R ZL ZR minus plus L3 R3 as usages
-   1-12, Home 13, Capture 14; a PowerA controller for Switch 2 ("Lic3 Pro Controller", 27.10.) gave exactly that. */
+   1-12, Home 13, Capture 14; a PowerA controller for Switch 2 ("Lic3 Pro Controller", 2026-10-27) gave exactly that. */
 enum { GAMEPAD_HID_GENERIC, GAMEPAD_HID_SWITCH_PRO };
 static inline int gamepad_hid_order(const char *product) {
     return product && strstr(product, "Pro Controller") ? GAMEPAD_HID_SWITCH_PRO : GAMEPAD_HID_GENERIC;
@@ -131,12 +131,12 @@ static inline uint64_t gamepad_hid_buttons(const unsigned char b[16], int order)
 }
 
 /* A stick that stops short of its HID range: that PowerA reaches 0.70-0.74 of it to the sides and 0.80-0.88 up and down
-   (27.10.), so a full push read 0.66-0.71 after the dead zone and Smash walked where it should dash. For pads in the
+   (2026-10-27), so a full push read 0.66-0.71 after the dead zone and Super Smash Bros. Ultimate (games/ssbu, where it was measured) walked where it should dash. For pads in the
    Switch Pro order, each direction of each axis is scaled by the furthest it has reached since the pad connected, and
    never by less than GAMEPAD_HID_REACH_MIN: a full push reads 1 once it has been made, a half push stays a half push.
    A zeroed GamepadHidReach starts at that minimum.
    GAMEPAD_HID_FULL_AT of the reach already reads 1. The pad sends about 70 reports a second (p50 15 ms, p90 19 ms), and
-   Smash dashed on the flicks that went from 0.25 to 0.8 in two reports and walked on those that took three (28.10.: the
+   Smash dashed on the flicks that went from 0.25 to 0.8 in two reports and walked on those that took three (2026-10-28: the
    player's walk was the 46 ms flick, the runs 30 ms). Over the same 15 flicks, full at 0.85 left none taking three
    (full at 1.0: one; 0.9: one; 0.8: two), and the four slow pushes to the end still took four or more, so they walk. */
 #define GAMEPAD_HID_REACH_MIN 0.65f

@@ -54,7 +54,7 @@ int main(void) {
     check(gamepad_hid_order("Lic3 Pro Controller") == GAMEPAD_HID_SWITCH_PRO, "a PowerA for Switch 2 sends the Switch Pro order");
     check(gamepad_hid_order("8BitDo SN30 Pro") == GAMEPAD_HID_GENERIC && gamepad_hid_order(NULL) == GAMEPAD_HID_GENERIC,
           "other pads keep the generic order");
-    // measured 27.10. on the PowerA: A 2, B 1, X 4, Y 3, L 5, R 6, ZL 7, ZR 8, minus 9, plus 10
+    // measured 2026-10-27 on the PowerA: A 2, B 1, X 4, Y 3, L 5, R 6, ZL 7, ZR 8, minus 9, plus 10
     const int pro_bits[15] = {-1, 0, 1, 2, 3, 6, 7, 8, 9, 11, 10, 4, 5, -1, -1};
     const int generic_bits[16] = {-1, 0, 1, -1, 2, 3, -1, 6, 7, 8, 9, 11, 10, -1, 4, 5};
     for (int u = 1; u <= 15; u++) {

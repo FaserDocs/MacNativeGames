@@ -444,7 +444,7 @@ static void hid_pad_detach(void) {
 }
 
 /* Why a pad was not taken: HID_LEFT for good (GameController's, or another pad is in use), HID_NOT_READY may change
-   (Q127: a PowerA that reconnected while Smash ran was never taken again and the log said nothing, because every early
+   (2026-10-28: a PowerA that reconnected while Super Smash Bros. Ultimate ran was never taken again and the log said nothing, because every early
    return here was silent; the GameController flag read No at once, so the reason is named now instead of guessed). */
 enum { HID_TAKEN, HID_LEFT, HID_NOT_READY };
 static int hid_pad_attach(IOHIDDeviceRef device, char *why, size_t n) {
@@ -716,7 +716,7 @@ void runtime_mouse_release(void) {   /* main thread: the window let the pointer 
 
 #if TARGET_OS_OSX
 /* macOS counts the keyboard and the mouse as the user's activity, not a game controller: a player using only the
-   controller got the screen saver in the middle of a fight (Q128, 28.10.; pmset listed no display-sleep assertion from
+   controller got the screen saver in the middle of a fight (2026-10-28, in Super Smash Bros. Ultimate; pmset listed no display-sleep assertion from
    the game). While the controller's state keeps changing, the game holds a PreventUserIdleDisplaySleep assertion; it is
    let go once the controller has been still for the Mac's own screen saver time (System Settings, read from
    com.apple.screensaver idleTime of this host; 300 s when none is set), so the screen saver then comes as it would after
