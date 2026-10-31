@@ -334,6 +334,11 @@ static void patch_bench_cam(Module *m){
    copies never call. Always installed on the Mac: at K = 1 the level is the game's own, bit for bit. */
 #define LOD_DATA_SLOT 0x180u
 #if !TARGET_OS_IPHONE
+/* The LOD, render distance, field of view and shadow resolution patches read their factors from the
+   data page, which only the Mac's settings panel and input commands write. The iOS export (TOTK_EXPORT_IOS) runs these
+   patches on the Mac to make the phone's code, and on the phone that page would read 0 (no LOD distance, no far plane,
+   no field of view, the smallest shadow map), so the export leaves them out: the phone runs the game's own code there. */
+static int live_tuned(void){return !getenv("TOTK_EXPORT_IOS");}
 static _Atomic uint32_t *lod_factor;
 static double lod_k=1,far_k=1;   /* the factors asked for (the settings panel may ask before the patches are installed) */
 static void factor_store(_Atomic uint32_t *slot,double k){float f=(float)k;uint32_t bits;memcpy(&bits,&f,4);atomic_store(slot,bits);}
@@ -347,6 +352,7 @@ static void patch_lod_distance(Module *m){
 #if TARGET_OS_IPHONE
     (void)m;
 #else
+    if(!live_tuned())return;
     double k=env_factor("TOTK_LOD_SCALE",0.1);if(k)lod_k=k;else k=lod_k;
     static const uint64_t sites[]={0x7ad1c,0x7c00c,0x7c4b0,0x7d4a8,0x80f30,0x1ee8474,
                                    0x2870578,0x287200c,0x2872a30,0x2874924,0x2874cfc,0x287f53c};
@@ -390,6 +396,7 @@ static void patch_far_distance(Module *m){
 #if TARGET_OS_IPHONE
     (void)m;
 #else
+    if(!live_tuned())return;
     double k=env_factor("TOTK_FAR_SCALE",0.001);if(k)far_k=k;else k=far_k;
     uint64_t data=(m->file_size+0x3fff)&~0x3fffULL,stub=((m->file_size+15)&~15ULL)+128+12*5*4;   /* after the LOD stubs */
     if(stub+24>data||data+FAR_DATA_SLOT+8>m->size)runtime_fail("1.4.3 render distance layout");
@@ -427,6 +434,7 @@ static void patch_fov(Module *m){
 #if TARGET_OS_IPHONE
     (void)m;
 #else
+    if(!live_tuned())return;
     double k=env_factor("TOTK_FOV_SCALE",0.5);if(k)fov_k=k;else k=fov_k;
     if(k>2)runtime_fail("TOTK_FOV_SCALE takes 0.5 to 2");
     uint64_t data=(m->file_size+0x3fff)&~0x3fffULL,stub=((m->file_size+15)&~15ULL)+128+12*5*4+24;   /* after the far stub */
@@ -464,6 +472,7 @@ static void patch_shadow_res(Module *m){
 #if TARGET_OS_IPHONE
     (void)m;
 #else
+    if(!live_tuned())return;
     double k=env_factor("TOTK_SHADOW_SCALE",0.25);if(k)shadow_k=k;else k=shadow_k;
     if(k>8)runtime_fail("TOTK_SHADOW_SCALE takes 0.25 to 8");
     static const Patch sites[]={{0xf5998,0x1e220801,0x1e230821},{0xf59b8,0x1e210800,0x1e230800}};   /* fmul s1,s0,s2 / s0,s0,s1; then x K in s3 */
