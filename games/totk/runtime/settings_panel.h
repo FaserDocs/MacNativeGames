@@ -21,6 +21,7 @@
                                                              window any more); TOTK_ASPECT's ratio is offered too
    Input
      controller type      auto / Xbox / PlayStation / Switch runtime_gamepad_type_set (gamepad.m), saved
+     background controller switch, default off              runtime_gamepad_background_set, controller-background.txt
      DualSense bow trigger switch                            runtime_triggers_choose (gamepad_feedback.m), saved in
                                                              dualsense-triggers.txt; Breath of the Wild 1.9.0 and Tears of
                                                              the Kingdom 1.4.3 only; TOTK_DUALSENSE_TRIGGERS or an agent's
@@ -507,6 +508,8 @@ static NSArray<TOTKSettingRow *> *settings_rows(void) {
   @[@(GAMEPAD_TYPE_AUTO),@(GAMEPAD_TYPE_XBOX),@(GAMEPAD_TYPE_PLAYSTATION),@(GAMEPAD_TYPE_SWITCH)],
   ^int{return runtime_gamepad_type(NULL);},^(int v){runtime_gamepad_type_set(v);});
  pad.firstTitle=^NSString *{return settings_pad_auto_text();};[rows addObject:pad];
+ [rows addObject:settings_row(settings_text("后台手柄输入","Controller input in background"),nil,nil,
+  ^int{return runtime_gamepad_background_enabled();},^(int v){runtime_gamepad_background_set(v);})];
  NSString *bow=settings_text("DualSense 拉弓扳机（R2）","DualSense bow trigger (R2)");
  if(!runtime_triggers_available())[rows addObject:settings_fixed(bow,settings_text("这个版本没有","Not in this version"))];
  else if(runtime_triggers_locked())[rows addObject:settings_fixed(bow,settings_on_off(runtime_triggers_choice()))];
