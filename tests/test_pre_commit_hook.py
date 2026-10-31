@@ -32,10 +32,11 @@ class PreCommitHook(unittest.TestCase):
     def test_source_files_pass(self):
         self.stage('runtime/loader.c')
         self.stage('docs/exefs-layout.md')
+        self.stage('games/alc/mods/1.0.1/60fps/exefs/60fps.pchtxt')
         self.assertEqual(self.hook().returncode, 0)
 
     def test_game_files_are_stopped(self):
-        for path in ('prod.keys', 'dump/game.XCI', 'main.nso', 'games/totk/extracted/romfs/Pack/a.bin', 'ExeFS/main'):
+        for path in ('prod.keys', 'dump/game.XCI', 'main.nso', 'games/totk/extracted/romfs/Pack/a.bin', 'ExeFS/main', 'mods/x/exefs/main.npdm'):
             with self.subTest(path=path):
                 self.git('rm', '-rq', '--cached', '--ignore-unmatch', '.')
                 self.stage(path)
