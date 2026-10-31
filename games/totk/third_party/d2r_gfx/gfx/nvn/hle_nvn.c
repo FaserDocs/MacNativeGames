@@ -227,9 +227,7 @@ NVN(nvnMemoryPoolBuilderSetFlags, void, NVNmemoryPoolBuilder *b, int f) { ((pool
 static int cmdlog_env(void) { static int on = -1; if (on < 0) on = getenv("TOTK_CMD_LOG") != NULL; return on; }
 static int chainlog_env(void) { static int on = -1; if (on < 0) on = getenv("TOTK_CHAIN_LOG") != NULL; return on; }   // once: EndRecording runs per command buffer
 static int poollog_env(void) { static int on = -1; if (on < 0) on = getenv("TOTK_POOL_LOG") != NULL; return on; }
-#ifdef GAME_BOTW
 static void guest_chain(const char *what);
-#endif
 NVN(nvnMemoryPoolInitialize, NVNboolean, NVNmemoryPool *p, const NVNmemoryPoolBuilder *b) {
     const pool_builder_t *s = (const pool_builder_t *)b; pool_t *o = (pool_t *)p;
     memset(o, 0, sizeof *o);
@@ -242,7 +240,10 @@ NVN(nvnMemoryPoolInitialize, NVNboolean, NVNmemoryPool *p, const NVNmemoryPoolBu
        stays valid as is (Map, GetBufferAddress, buffers), it only gets no zero-copy buffer and no dirty range, for
        there is nothing in it to track. */
     if (o->mem && o->size && gpu_visible) { mtl_pool_add(o->mem, o->size); nvn_dirty_add_range(o->mem, o->size); }
-    else if (o->mem && !o->size) { static _Atomic unsigned said; if (atomic_fetch_add(&said, 1) < 4) LOG("MemoryPoolInitialize 池 %p 没有字节（size=0，flags=%#x）：不建零拷贝缓冲，也不进脏页跟踪", (void *)o->mem, o->flags); }
+    else if (o->mem && !o->size) {   /* with the game code that asked: whether the game means an empty pool or a size of ours came back 0 */
+        static _Atomic unsigned said;
+        if (atomic_fetch_add(&said, 1) < 4) { LOG("MemoryPoolInitialize 池 %p 没有字节（size=0，flags=%#x）：不建零拷贝缓冲，也不进脏页跟踪", (void *)o->mem, o->flags); guest_chain("empty memory pool"); }
+    }
     if (!o->mem) LOG("【红】MemoryPoolInitialize 池没有存储 flags=%#x size=%#llx", o->flags, o->size);
     OLOG("MemoryPool %p mem=%p size=%#llx flags=%#x", (void *)p, (void *)o->mem, o->size, o->flags);
     if (poollog_env()) LOG("[pool] %p mem=%p..%p size=%#llx flags=%#x game=%p", (void *)p, (void *)o->mem, (void *)(o->mem + o->size), o->size, o->flags, (void *)o->game_mem);
