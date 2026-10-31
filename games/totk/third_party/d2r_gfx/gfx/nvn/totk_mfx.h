@@ -9,7 +9,7 @@
    MFX_MAX  the game is not paced (uncapped) and every frame gets one in between; the screen still shows one picture per
             refresh, so above half the refresh rate some game frames are replaced by interpolated ones.
    TOTK_MFX=interp30 | interp40 | interp50 | interp60 | interpmax starts in that mode (interp: 50+50, half of a 100 Hz display, the
-   old "half the refresh rate"); flag mfx_interp <0..4> sets it, -1 cycles. A change takes effect at the next game frame
+   old "half the refresh rate"); flag mfx_interp <0..5> sets it, -1 cycles. A change takes effect at the next game frame
    boundary (mfx_latch at the present), so a frame is never half on. */
 #include "totk_mfx_mode.h"
 const char *mfx_mode_name(int mode);
