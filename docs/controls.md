@@ -76,6 +76,7 @@ Effects (Tears of the Kingdom 1.4.3; each choice acts at once):
 - **Render distance:** 1× (the game's own) to 10× the camera's far plane. The game's own (25 000) already spans the whole map, so more shows little or nothing more. Kept in `graphics-far.txt` (percent, such as `300` for 3×); `TOTK_FAR_SCALE` decides first.
 - **Shadow resolution:** off (no sun shadows), 1× (the game's own 800 × 800 per cascade), 2×, 3× or 4×: sharper shadow edges at a little more GPU time and memory (4×: four 3200 × 3200 maps). Kept in `graphics-shadow.txt` (×100); off is kept with the effects. `TOTK_SHADOW_SCALE` decides first.
 - **FXAA anti-aliasing:** on (the game's own) or off: off leaves the 3D picture as the game's tone mapping made it, sharper edges with their stair steps. Kept in `graphics-fxaa.txt`.
+- **Depth of field:** on (the game's own) or off: off keeps the camera from taking any depth-of-field request, so cutscenes and events no longer blur the background (they play on as before). Kept in `graphics-dof.txt`.
 - **Sharpening:** off, 25 %, 50 %, 75 % or 100 % (FSR 1 RCAS on the 3D picture; the UI drawn after it is not touched), with or without FXAA. Kept in `graphics-sharpen.txt`.
 - **Ambient occlusion, Grass, Character light, Volumetric fog, Fog:** switches, all on by default. Off leaves out the soft corner shade, the field grass, the extra light the game puts on Link, the ray-marched light in the air, or the layers of haze added over the distance. Kept in `graphics-effects.txt` (the ones that are off). More effects come as they are found.
 

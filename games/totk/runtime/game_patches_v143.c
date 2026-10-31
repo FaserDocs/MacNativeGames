@@ -334,7 +334,7 @@ static void patch_bench_cam(Module *m){
    copies never call. Always installed on the Mac: at K = 1 the level is the game's own, bit for bit. */
 #define LOD_DATA_SLOT 0x180u
 #if !TARGET_OS_IPHONE
-/* The LOD, render distance, field of view and shadow resolution patches read their factors from the
+/* The LOD, render distance, field of view, shadow resolution and depth of field patches read their factors from the
    data page, which only the Mac's settings panel and input commands write. The iOS export (TOTK_EXPORT_IOS) runs these
    patches on the Mac to make the phone's code, and on the phone that page would read 0 (no LOD distance, no far plane,
    no field of view, the smallest shadow map), so the export leaves them out: the phone runs the game's own code there. */
@@ -492,7 +492,49 @@ static void patch_shadow_res(Module *m){
     fprintf(stderr,"[totk] 1.4.3 shadow resolution x%g (cascades %gx%g), stub +%#llx\n",k,800*k,800*k,(unsigned long long)stub);
 #endif
 }
+/* Depth of field off (Mac, the settings panel's effects page, 2026-10-31; UltraCam turns it off through the game's DOF
+   state rather than a shader, and so does this). The game runs its DOF passes (dof_near_mask .. dof_coc_composite) only
+   while a DOF request is stored: the camera's DOF requester takes them at main+0x1ec606c (focus distance, f-number, blur
+   level per requester type; callers: the event commands ExecuteCameraSetDof / ExecuteCameraSetCoCDof at main+0x224c560
+   and main+0x6a0cd8) and the final blur at main+0x1ec6180 (the event command only). With DOF off both entries return
+   without storing, so no DOF is requested; an event command still marks itself done (main+0x224c5b0), so cutscenes go on.
+   The flag sits on the data page (+0x19c); x9 is free at both entries. */
+#define DOF_DATA_SLOT 0x19cu
 #if !TARGET_OS_IPHONE
+static _Atomic uint32_t *dof_flag;
+static int dof_off;
+#endif
+static void patch_dof(Module *m){
+#if TARGET_OS_IPHONE
+    (void)m;
+#else
+    if(!live_tuned())return;
+    static const Patch sites[]={{0x1ec606c,0xb9400808,0},{0x1ec6180,0xa9ba7bfd,0}};   /* ldr w8,[x0,#8] / stp x29,x30,[sp,#-0x60]! */
+    static const Patch next[]={{0x1ec6070,0x7100007f,0},{0x1ec6184,0xf9000bfb,0}};
+    uint64_t data=(m->file_size+0x3fff)&~0x3fffULL,stub=((m->file_size+15)&~15ULL)+128+12*5*4+24+24+32;   /* after the shadow stubs */
+    if(stub+48>data||data+DOF_DATA_SLOT+4>m->size)runtime_fail("1.4.3 depth of field layout");
+    for(unsigned i=0;i<48;i++)if(m->base[stub+i])runtime_fail("1.4.3 depth of field padding not empty");
+    for(unsigned i=0;i<2;i++){uint32_t w,n;memcpy(&w,m->base+sites[i].off,4);memcpy(&n,m->base+next[i].off,4);
+        if(w!=sites[i].original||n!=next[i].original)runtime_fail("1.4.3 depth of field: the DOF requester does not match");}
+    for(unsigned i=0;i<2;i++){
+        uint64_t at=stub+i*24;
+        uint32_t words[6]={
+            adrp(9,(uintptr_t)m->base+at,(uintptr_t)m->base+data),
+            0xb9400129|((DOF_DATA_SLOT/4)<<10),     /* ldr w9, [x9, #+0x19c]: DOF off? */
+            0x35000069,                             /* cbnz w9, ret (3 words on) */
+            sites[i].original,                      /* the first instruction */
+            branch(at+16,sites[i].off+4),
+            0xd65f03c0};                            /* ret: no request stored */
+        memcpy(m->base+at,words,sizeof words);
+    }
+    dof_flag=(_Atomic uint32_t *)(void *)(m->base+data+DOF_DATA_SLOT);atomic_store(dof_flag,(uint32_t)dof_off);
+    for(unsigned i=0;i<2;i++){uint32_t j=branch(sites[i].off,stub+i*24);memcpy(m->base+sites[i].off,&j,4);}
+    fprintf(stderr,"[totk] 1.4.3 depth of field %s (DOF requests at main+0x1ec606c / 0x1ec6180), stub +%#llx\n",dof_off?"off":"on",(unsigned long long)stub);
+#endif
+}
+#if !TARGET_OS_IPHONE
+void runtime_dof_set(int on){dof_off=!on;if(dof_flag)atomic_store(dof_flag,(uint32_t)dof_off);fprintf(stderr,"[totk] depth of field %s\n",on?"on":"off");}
+int runtime_dof_on(void){return !dof_off;}
 void runtime_shadow_scale_set(double k){
     shadow_k=k;if(shadow_factor)factor_store(shadow_factor,k);
     fprintf(stderr,"[totk] shadowscale: shadow resolution x%g\n",k);
@@ -608,6 +650,7 @@ void runtime_game_patches(Module *m) {
     patch_far_distance(m);
     patch_fov(m);   /* after aspect_install: Vert+ may hold the same load */
     patch_shadow_res(m);
+    patch_dof(m);
     const char *enabled = getenv("TOTK_FPS60");
     if (enabled && !strcmp(enabled, "0")) {
         fprintf(stderr, "[totk] 1.4.3 shipping frame controller (TOTK_FPS60=0)\n");
