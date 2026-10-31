@@ -55,6 +55,10 @@ void runtime_keymap_reset(void){
    once a minute. In an agent's test session (TOTK_SLOT_OWNER other than user) the line says the user is playing it: its
    save is a copy, its scripted measurement is void, and its script must not close the game under the user
    (2026-10-15: the user played 12 minutes in a test window and the script closed it at its time limit). */
+/* TOTK_IGNORE_USER_INPUT=1 (unattended test runs): the window's keys and mouse buttons and the controllers do not reach
+   the game, so typing elsewhere while a test window pops up neither plays it nor stops TOTK_AUTOLOAD (2026-10-31: two
+   survey runs sat at the title after a stray key cancelled the auto-load). Scripted input still drives it. */
+static int ignore_user(void){static int v=-1;if(v<0){const char *e=getenv("TOTK_IGNORE_USER_INPUT");v=e&&atoi(e);if(v)fprintf(stderr,"[input] TOTK_IGNORE_USER_INPUT: keyboard, mouse and controllers ignored (scripted input only)\n");}return v;}
 static void user_input(const char *what){
  runtime_survey_cancel_user();
  runtime_autoload_user_input();
@@ -70,13 +74,13 @@ enum { KEY_SETTINGS = KEYMAP_SETTINGS_KEY };
 void runtime_input_key_synthetic(unsigned code,int down){if(code>=128)return;pthread_mutex_lock(&inputLock);int press=down&&!keys[code];if(down&&!keys[code])pending|=button(code);keys[code]=(unsigned char)!!down;held_buttons_locked();pthread_mutex_unlock(&inputLock);
  if(press&&code==KEY_SETTINGS)runtime_settings_toggle();}
 void runtime_input_key(unsigned code,int down){
- if(code>=128)return;if(down)user_input("keyboard");
+ if(code>=128||ignore_user())return;if(down)user_input("keyboard");
  pthread_mutex_lock(&inputLock);int press=down&&!held[code];held[code]=(unsigned char)!!down;held_changed_locked();pthread_mutex_unlock(&inputLock);
  if(press&&code==KEY_SETTINGS)runtime_settings_toggle();
 }
 /* A mouse button in mouse mode (runtime/gamepad.m: 0 left, 1 right, 2 middle, 3 and 4 the side buttons). */
 void runtime_input_mouse(int button,int down){
- if(button<0||button>=KEYMAP_MOUSE_BUTTONS)return;if(down)user_input("mouse");
+ if(button<0||button>=KEYMAP_MOUSE_BUTTONS||ignore_user())return;if(down)user_input("mouse");
  pthread_mutex_lock(&inputLock);held[KEYMAP_MOUSE_FIRST+button]=(unsigned char)!!down;held_changed_locked();pthread_mutex_unlock(&inputLock);
 }
 void runtime_input_clear(void){pthread_mutex_lock(&inputLock);memset(keys,0,sizeof(keys));memset(held,0,sizeof held);heldOut=(KeyMapOutput){0};pending=0;held_buttons_locked();pthread_mutex_unlock(&inputLock);runtime_gamepad_clear();}
@@ -101,7 +105,7 @@ static int pad_states(NpadState *out,int max,const uint32_t *id,uint32_t want_st
  state.attributes=1;for(unsigned i=0;i<128;i++)if(keys[i])state.buttons|=button(i);state.buttons|=heldOut.buttons|pending;pending=0;
  state.lx=32767*((int)keys[2]-(int)keys[0]);state.ly=32767*((int)keys[13]-(int)keys[1]);state.rx=32767*((int)keys[124]-(int)keys[123]);state.ry=32767*((int)keys[126]-(int)keys[125]);
  if(heldOut.lx)state.lx=heldOut.lx;if(heldOut.ly)state.ly=heldOut.ly;if(heldOut.rx)state.rx=heldOut.rx;if(heldOut.ry)state.ry=heldOut.ry;
- RuntimeGamepadState pad;runtime_gamepad_read(&pad);state.buttons|=pad.buttons;
+ RuntimeGamepadState pad;runtime_gamepad_read(&pad);if(ignore_user())pad=(RuntimeGamepadState){0};state.buttons|=pad.buttons;
  if(pad.buttons&~padSeen||abs(pad.lx)>16384||abs(pad.ly)>16384||abs(pad.rx)>16384||abs(pad.ry)>16384)user_input("controller");padSeen=pad.buttons;
  if(abs(pad.lx)>abs(state.lx))state.lx=pad.lx;if(abs(pad.ly)>abs(state.ly))state.ly=pad.ly;
  if(abs(pad.rx)>abs(state.rx))state.rx=pad.rx;if(abs(pad.ry)>abs(state.ry))state.ry=pad.ry;

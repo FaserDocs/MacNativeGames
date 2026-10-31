@@ -6482,16 +6482,36 @@ int dm_gfx_aniso(void) {
                  else v = was; }
     return v;
 }
+/* Drops the Metal samplers made for the game's sampler numbers (each is made again at its next use), the way a game
+   re-registration does: under the registry lock, g_reg_gen so no argument buffer is reused with the old ones, the old
+   ones released only after the GPU is done with them. Returns how many were dropped. */
+static int samp_cache_flush(void) {
+    int dropped = 0;
+    for (int i = 0; i < g_nsreg; i++) if (g_sview && g_sview[i]) { defer_obj_release(CFBridgingRelease(g_sview[i])); g_sview[i] = NULL; g_srid[i] = 0; dropped++; }
+    g_reg_gen++;
+    return dropped;
+}
 void dm_gfx_aniso_set(int n) {
     n = n < 0 ? 0 : n > 16 ? 16 : n;
     if (getenv("TOTK_ANISO") || dm_gfx_aniso() == n) return;
     registry_lock();
     atomic_store(&g_aniso_now, n);
-    int dropped = 0;
-    for (int i = 0; i < g_nsreg; i++) if (g_sview && g_sview[i]) { defer_obj_release(CFBridgingRelease(g_sview[i])); g_sview[i] = NULL; g_srid[i] = 0; dropped++; }
-    g_reg_gen++;
+    int dropped = samp_cache_flush();
     registry_unlock();
     MLOG("各向异性过滤 %dx（设置面板，立即生效：%d 个采样器重建）", n, dropped);
+}
+/* Shadows off (the effects page, totk_fx.h): every comparison sampler compares "always", so each sample_compare of a
+   shadow map reads lit, in whichever shader reads it (the shadow pre-pass, the deferred lighting tiles that are in
+   shadow, the volumetric fog's light shafts, compute passes: nine shaders in a field frame of 1.4.3). The samplers are
+   made again (samp_cache_flush). */
+static _Atomic int g_shadow_cmp_off;
+void dm_gfx_shadow_samplers_off(int off) {
+    if (atomic_load(&g_shadow_cmp_off) == !!off) return;
+    registry_lock();
+    atomic_store(&g_shadow_cmp_off, !!off);
+    int dropped = samp_cache_flush();
+    registry_unlock();
+    MLOG("阴影%s：比较采样器%s（%d 个采样器重建）", off ? "关" : "开", off ? "一律“总是通过”" : "恢复游戏的比较方式", dropped);
 }
 static id<MTLSamplerState> samp_by_id(int sid) {   // 调用方持 g_rmu | Caller holds g_rmu
     if (sid < 0 || sid >= g_nsreg || !g_sreg_ok[sid]) { RED_ONCE(12, "采样器号 %d 未登记", sid); return nil; }
@@ -6522,7 +6542,7 @@ static id<MTLSamplerState> samp_by_id(int sid) {   // 调用方持 g_rmu | Calle
                     d.mipFilter != MTLSamplerMipFilterNotMipmapped && repeats;
     if (aniso > 1 && material && d.maxAnisotropy < (NSUInteger)aniso) d.maxAnisotropy = (NSUInteger)aniso;
     if (material) d.lodBias = tup_mip_bias();   // TOTK_MFX_TEMPORAL_MIPBIAS (totk_taa.m): finer mip levels for a scene upscaled temporally; 0 unless set
-    if (p.cmp_mode) d.compareFunction = (MTLCompareFunction)(p.cmp_func - 1);
+    if (p.cmp_mode) d.compareFunction = atomic_load(&g_shadow_cmp_off) ? MTLCompareFunctionAlways : (MTLCompareFunction)(p.cmp_func - 1);   // shadows off: dm_gfx_shadow_samplers_off
     d.borderColor = p.border[3] > 0.5f ? (p.border[0] > 0.5f ? MTLSamplerBorderColorOpaqueWhite : MTLSamplerBorderColorOpaqueBlack) : MTLSamplerBorderColorTransparentBlack;
     if (p.reduction > 2) die("sampler reduction filter %u unsupported", p.reduction);
     d.reductionMode = (MTLSamplerReductionMode)p.reduction;   // TOTK: NVN AVERAGE/MIN/MAX = Metal WeightedAverage/Minimum/Maximum

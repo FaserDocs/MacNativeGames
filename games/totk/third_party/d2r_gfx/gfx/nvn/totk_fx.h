@@ -11,7 +11,7 @@
 typedef struct { const char *id, *zh, *en; const char *fs[6], *cs[4]; } fx_effect;
 static const fx_effect k_fx[] = {
     {"ao", "环境光遮蔽", "Ambient occlusion", {0}, {0}},   // totk_ssao.h
-    {"shadow", "阴影", "Shadows", {0}, {0}},   // the sun's shadows: totk_ssao.h, the shadow pre-pass's shadow term set to lit
+    {"shadow", "阴影", "Shadows", {0}, {0}},   // every shadow-map comparison reads lit (nvn_mtl.m) and the shadow pre-pass's term too (totk_ssao.h: its far terrain shadow compares by hand)
     {"grass", "草", "Grass", {"33099f8c133950f5"}, {0}},   // the field's grass blades (2026-10-30 survey, v143-grass)
     {"charlight", "角色补光", "Character light", {"61315f715cdf30ed"}, {0}},   // the extra light on Link
     /* The fog of the air: the scattering images at 1/8 and 1/16 of the screen (240x135 / 120x67 at 1080p) take additive
@@ -74,6 +74,6 @@ void dm_gfx_fx_set(int i, int on) {
     if (!dm_gfx_fx_available(i)) return;
     if (on) atomic_fetch_and(&g_fx_off, ~(1u << i)); else atomic_fetch_or(&g_fx_off, 1u << i);
     if (i == FX_AO) ssao_set_off(!on);
-    if (i == FX_SHADOW) ssao_set_shadow_off(!on);
+    if (i == FX_SHADOW) { extern void dm_gfx_shadow_samplers_off(int off); ssao_set_shadow_off(!on); dm_gfx_shadow_samplers_off(!on); }
     MLOG("[fx] %s %s", k_fx[i].id, on ? "on" : "off");
 }
