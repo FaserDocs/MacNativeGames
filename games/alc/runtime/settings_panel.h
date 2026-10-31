@@ -544,7 +544,7 @@ enum { SETTINGS_W = 600, SETTINGS_ROW_H = 34, SETTINGS_GAP = 6, SETTINGS_TOP = 9
  NSButton *star=[NSButton buttonWithTitle:settings_text("⭐ 给作者点赞","⭐ Star the project") target:self action:@selector(star:)];
  for(NSButton *b in @[contrib,star]){b.controlSize=NSControlSizeSmall;b.font=[NSFont systemFontOfSize:11];b.refusesFirstResponder=YES;[b sizeToFit];
   b.frame=NSMakeRect(0,5,b.frame.size.width,24);b.wantsLayer=YES;[self addSubview:b];}
- self.displayButtons=@[star,contrib];
+ contrib.hidden=YES;self.displayButtons=@[star];   /* Astral Chain: no shared shader list to contribute to (TotK's repository and lists) */
  [self selectPage:g_settings_page];[self refresh];
  __weak TOTKSettingsPanel *weak=self;
  self.clickMonitor=[NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskLeftMouseDown|NSEventMaskRightMouseDown handler:^NSEvent *(NSEvent *e){

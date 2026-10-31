@@ -86,9 +86,9 @@ shader-seed:
 	@{ ls -d "$(SEED_CACHE)"/*/ 2>/dev/null | head -1; } | while read d; do \
 	  n=$$(find "$$d" -name '*.metal' | wc -l | tr -d ' '); \
 	  echo "shader seed: $$n translations from $$d"; \
-	  rm -rf "shader-seed"; mkdir -p "shader-seed"; \
-	  cp "$$d"/*.metal "$$d"/*.json "shader-seed"/ 2>/dev/null || true; \
-	done; [ -d shader-seed ] || { echo "no shader cache yet (play once first)"; exit 1; }
+	  rm -rf "$(OUT)/shader-seed"; mkdir -p "$(OUT)/shader-seed"; \
+	  cp "$$d"/*.metal "$$d"/*.json "$(OUT)/shader-seed"/ 2>/dev/null || true; \
+	done; [ -d "$(OUT)/shader-seed" ] || { echo "no shader cache yet (play once first)"; exit 1; }
 
 # The player's mods, made into checked tables: exefs patches (mods/1.0.1/<name>/exefs/*.pchtxt) -> <work>/patches,
 # RomFS mods (mods/<name>/romfs/...) -> their manifest.tsv (sizes and SHA-256 of the replacements and the originals).
@@ -116,9 +116,9 @@ $(OUT)/AppIcon.icns:
 SELF_CONTAINED ?= 1
 app: runtime shader-tools $(OUT)/launcher $(OUT)/AppIcon.icns
 	rm -rf "$(APP)" && mkdir -p "$(APP)/Contents/MacOS" "$(APP)/Contents/Resources"
-	@if [ -d shader-seed ]; then rm -rf "$(APP)/Contents/Resources/shader-seed"; cp -R shader-seed "$(APP)/Contents/Resources/shader-seed"; \
+	@if [ -d "$(OUT)/shader-seed" ]; then rm -rf "$(APP)/Contents/Resources/shader-seed"; cp -R "$(OUT)/shader-seed" "$(APP)/Contents/Resources/shader-seed"; \
 	   echo "shader seed: $$(find "$(APP)/Contents/Resources/shader-seed" -name '*.metal' | wc -l | tr -d ' ') translations carried"; \
-	 else echo "no shader-seed/ (run make shader-seed after playing to ship one)"; fi
+	 else echo "no $(OUT)/shader-seed (run make shader-seed after playing to ship one)"; fi
 	@if [ "$(SELF_CONTAINED)" = "1" ]; then \
 	   W="$(APP)/Contents/Resources/work"; mkdir -p "$$W/rewritten" "$$W/extracted/v101" "$$W/extracted/firmware" "$$W/patches" "$$W/build"; \
 	   echo "self-contained: copying the runtime into the bundle (clonefile where possible)"; \
