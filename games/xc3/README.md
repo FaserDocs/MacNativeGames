@@ -5,7 +5,7 @@ Xenoblade Chronicles 3 running natively on Apple silicon Macs, the way `games/to
 - Horizon's services are answered by a native host,
 - NVN graphics are replayed on Metal 4, with the game's shaders translated to Metal.
 
-This folder started as a copy of `games/ot0` (Octopath Traveler 0), itself a copy of `games/by3` and `games/totk`. It keeps its own copies of everything it builds and runs with: `runtime/`, `third_party/d2r`, `third_party/d2r_gfx`, `prebuilt/`, `scripts/`, and the shader translator's source in `tools/totk_xlate`. Nothing here reads another game's folder; [third_party/COPIES.md](third_party/COPIES.md) says where each copy came from. How the port was done and what was found on the way: [CHANGELOG.md](CHANGELOG.md). The plan and working notes are in [docs/](docs/PLAN.md).
+This folder started as a copy of `games/ot0` (Octopath Traveler 0), itself a copy of `games/by3` and `games/totk`. It keeps its own copies of everything it builds and runs with: `runtime/`, `third_party/d2r`, `third_party/d2r_gfx`, `prebuilt/`, `scripts/`, and the shader translator's source in `tools/totk_xlate`. Nothing here reads another game's folder; [third_party/COPIES.md](third_party/COPIES.md) says where each copy came from. How the port was done and what was found on the way: [CHANGELOG.md](CHANGELOG.md). Technical notes (transform feedback, geometry shaders, NVN coverage, services, game facts) are in [docs/reference](docs/reference/).
 
 You must own the game: use your own NSP and the `prod.keys` and system fonts dumped from your own Switch. Nothing from the game is in this repository. `XC3_build/` (the work folder) and `mods/` are ignored by git.
 
