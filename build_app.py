@@ -46,7 +46,7 @@ For iPhone/iPad: Xcode 26+ with iOS/Metal toolchains, plus xcodegen, CMake and N
 Optional: Xcode's Metal toolchain (xcodebuild -downloadComponent MetalToolchain) compiles the startup shaders into the
 app, so moving or rebuilding it does not repeat that work at launch.
 """
-import argparse, concurrent.futures, glob, hashlib, json, os, platform, shutil, struct, subprocess, sys, threading, time
+import argparse, concurrent.futures, glob, hashlib, json, os, platform, plistlib, shutil, struct, subprocess, sys, threading, time
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent
@@ -1409,7 +1409,13 @@ def keep_game_data(new, old, *, verify=app_seal_valid, _moves=None):
 def sign_app(app, logs):
     # Seal the bundle, including Info.plist and game resources. Copied helper
     # executables keep their existing signatures and byte identity. Checked once by install_app.
-    run(['codesign', '--force', '--sign', '-', app], logs / 'sign-app.log')
+    # The designated requirement is the bundle ID alone, not the ad-hoc default (this build's code hash): macOS keeps what
+    # the player allowed the app (Privacy & Security: a removable volume or Documents, where the Update page's
+    # checkout may be, app/auto_update.h) by that requirement, so a grant survives the next build or update instead of
+    # being asked again (user 2026-10-31).
+    bundle_id = plistlib.loads((Path(app) / 'Contents/Info.plist').read_bytes()).get('CFBundleIdentifier')
+    requirement = [f'-r=designated => identifier "{bundle_id}"'] if bundle_id else []
+    run(['codesign', '--force', '--sign', '-', *requirement, app], logs / 'sign-app.log')
 
 
 def remove_in_background(path):
