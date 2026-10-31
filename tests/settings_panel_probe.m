@@ -301,10 +301,11 @@ int main(int argc, const char **argv) { @autoreleasepool {
     runtime_input_key_synthetic(18, 1); runtime_input_key_synthetic(18, 1); tick(); runtime_input_key_synthetic(18, 0); tick();
     assert(settingsOpen && fakeSettingsCapture && settingsPanel && !settingsPanel.hidden && settingsPanel.superview == window.contentView);
     assert(NSContainsRect(window.contentView.bounds, settingsPanel.frame));
-    assert(settingsPanel.allRows.count == 23 + 2 * TOTK_V143);   /* 17 (anisotropy last on the display page, controller
+    assert(settingsPanel.allRows.count == 24 + TOTK_V143);   /* 17 (anisotropy last on the display page, controller
                                                                  background input on the input page), then the effects
-                                                                 page: FOV, two distances, FXAA, sharpening and two effect
-                                                                 switches (1.4.3), or six greyed rows */
+                                                                 page: FOV, two distances, shadows, FXAA, sharpening and
+                                                                 effect switches (1.4.3), or seven greyed rows (Breath of
+                                                                 the Wild 1.9.0's shadow resolution live) */
 
     /* FPS graph: a switch (here off at start; frontend.m turns it on when nothing is saved), kept in fps-graph.txt
        that both games share (user 2026-10-29). */
@@ -454,6 +455,30 @@ int main(int argc, const char **argv) { @autoreleasepool {
     flip(@"Ambient occlusion", NO); assert(!strcmp(savedWord, "ao bloom"));
     flip(@"Bloom", YES); flip(@"Ambient occlusion", YES); assert(fakeFxOn[0] && fakeFxOn[1] && !strcmp(savedWord, "none"));
 #else
+    /* Shadow resolution (Breath of the Wild 1.9.0, the production calls of game_patches_botw.c): the next launch's choice,
+       saved in shadows.txt (this run keeps the size it started with: tests/test_botw_shadow_res.c); greyed out while
+       TOTK_SHADOW_RES decides (rows are made at each opening). */
+#  ifdef GAME_BOTW190
+    assert([row(@"Shadow resolution").title isEqualToString:@"Shadow resolution (from the next launch)"]);
+    shows(@"Shadow resolution", @"As the game has it");
+    pick(@"Shadow resolution", @"2048 per cascade"); assert(runtime_shadow_res_saved() == 2048 && !strcmp(savedName, "shadows.txt") && !strcmp(savedWord, "2048"));
+    shows(@"Shadow resolution", @"2048 per cascade");
+    pick(@"Shadow resolution", @"As the game has it"); assert(!runtime_shadow_res_saved() && !strcmp(savedWord, "off"));
+    press(18); setenv("TOTK_SHADOW_RES", "2048", 1); press(18); assert(settingsOpen && !menu(@"Shadow resolution").enabled);
+    shows(@"Shadow resolution", @"Set by TOTK_SHADOW_RES");
+    press(18); unsetenv("TOTK_SHADOW_RES"); press(18); assert(settingsOpen && menu(@"Shadow resolution").enabled);
+    /* Where the patch does not act (ios_code(): the iOS export's run here, the device's code there) nothing is offered. */
+    press(18); setenv("TOTK_EXPORT_IOS", "/nonexistent", 1); press(18); assert(settingsOpen && !menu(@"Shadow resolution").enabled);
+    shows(@"Shadow resolution", @"Not in this version");
+    press(18); unsetenv("TOTK_EXPORT_IOS"); press(18); assert(settingsOpen && menu(@"Shadow resolution").enabled);
+    /* "Reset to defaults" sets it back to the game's own and removes shadows.txt. */
+    pick(@"Shadow resolution", @"2048 per cascade"); [settingsPanel selectPage:SETTINGS_PAGE_EFFECTS]; tick();
+    [settingsPanel.effectsButtons[0] performClick:nil]; tick();
+    assert(!runtime_shadow_res_saved() && !strcmp(removedName, "shadows.txt"));
+    [settingsPanel selectPage:SETTINGS_PAGE_DISPLAY]; tick();
+#  else
+    shows(@"Shadow resolution", @"Not in this version"); assert(!menu(@"Shadow resolution").enabled);
+#  endif
     shows(@"Render distance", @"Not in this version"); assert(!menu(@"Render distance").enabled);
     shows(@"Effect switches", @"Not in this version"); shows(@"Sharpening", @"Not in this version");
 #endif
