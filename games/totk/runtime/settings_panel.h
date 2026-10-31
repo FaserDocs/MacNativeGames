@@ -76,6 +76,9 @@
    the controller column, a controller button; with a controller, pick a row and press A, then the new button. An input
    another action holds swaps places with this box's. Right-click clears a box. Two buttons reset the keyboard and mouse,
    or the controller, to the default (the file removed). A capture ends after 6 seconds without input.
+   Update (PR #1404; user 2026-10-31): the version, and that it is the newest or each newer commit's message; an Update
+   button that closes the game, updates the app from its checkout and opens it again, or why it cannot and how to update
+   the code and build again by hand (update_tab.h, app/auto_update.h).
    On the display page, at the right of the bottom line, two buttons (user 2026-10-25): contribute the shaders and pipelines
    the shared list lacks (sent with gh in the background when it is signed in, as the launcher's reminder does; else the
    GitHub form opens and Finder shows the file), and star the project (its GitHub page); their results show for a few
@@ -874,7 +877,7 @@ enum { SETTINGS_W = 600, SETTINGS_ROW_H = 34, SETTINGS_GAP = 6, SETTINGS_TOP = 9
  NSMutableArray<TOTKSettingRow *> *rows=[NSMutableArray array];
  for(TOTKSettingRow *r in self.allRows)if(r.page==page)[rows addObject:r];
  self.rows=rows;self.controllerIndex=0;
- if(page==SETTINGS_PAGE_UPDATE)[self refreshUpdatePage];
+ if(page==SETTINGS_PAGE_UPDATE)[self showUpdatePage];   /* a check (update_tab.h) */
  [self layoutFooter];[self updateTargets];[self refreshBindings];
  [self.bindingsScroll.documentView scrollPoint:NSZeroPoint];   /* the list from its top (moving with a controller scrolls) */
  [self.window makeFirstResponder:self.window.contentView];   /* key 1 and Esc keep reaching the window */
@@ -1017,9 +1020,8 @@ enum { SETTINGS_W = 600, SETTINGS_ROW_H = 34, SETTINGS_GAP = 6, SETTINGS_TOP = 9
  fprintf(stderr,"[totk] settings: controller %s -> %s\n",controller_physical_names[physical],action<0?"nothing":controller_switch_names[action]);
  [self refreshBindings];
 }
-/* A new document changes the 更新 page's buttons with no input from the player, and A acts at once. The place stays on its
-   button. When that goes, the next A only shows the new place, as that can be the AI switch, the player's consent (always
-   last, so the first button is another one if there is one). */
+/* A new document can change the 更新 page's buttons with no input from the player, and A acts at once. The place stays on
+   its button; when that goes, the next A only shows the new place. */
 -(void)refreshUpdateTargets{
  NSInteger at=self.controllerIndex;NSView *place=at>=0&&at<(NSInteger)self.controllerTargets.count?self.controllerTargets[(NSUInteger)at]:nil;
  [self refreshUpdatePage];

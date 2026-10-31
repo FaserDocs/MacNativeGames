@@ -82,6 +82,8 @@ Effects (Tears of the Kingdom 1.4.3 where a row names no game; each choice acts 
 - **Sharpening:** off, 25 %, 50 %, 75 % or 100 % (FSR 1 RCAS on the 3D picture; the UI drawn after it is not touched), with or without FXAA. Kept in `graphics-sharpen.txt`.
 - **Ambient occlusion, Grass, Character light, Volumetric fog, Fog:** switches, all on by default. Off leaves out the soft corner shade, the field grass, the extra light the game puts on Link, the ray-marched light in the air, or the layers of haze added over the distance. Kept in `graphics-effects.txt` (the ones that are off). More effects come as they are found.
 
+Update: the version, and either that it is the newest or each newer commit's message (see [install.md](install.md#update-the-app)); when it can be updated for you, an **Update** button that closes the game, updates the app and opens it again; when not, why, and that you update the code and build again yourself.
+
 Playtime is kept per profile in `playtime.json`. It counts foreground time after shader warm-up (including menus), pauses in the background or during sleep, and does not depend on whether the overlay is shown.
 
 The overlay, frame lock or interpolation, resolution, aspect ratio and edge smoothing choices are saved beside `controls.txt` and restored on the next launch. A resolution or aspect ratio is restored once that game's patch is ready, if the choice is available. Explicit `TOTK_MFX`, `TOTK_TAA`, `TOTK_ASPECT`, `TOTK_MFX_OUTPUT`, `TOTK_MFX_UPSCALE`, and a non-automatic `TOTK_OUTPUT_RES` take precedence for that launch.

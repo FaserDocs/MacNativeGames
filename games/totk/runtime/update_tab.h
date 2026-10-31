@@ -1,10 +1,12 @@
-/* The settings panel's 更新 page (Mac; included by settings_panel.h): what upstream did after this version and, with the AI
-   summary on, whether that is worth updating. It reads update/summary.json in the game's data folder, the folder of
-   TOTK_CONTROLS, which the launcher rewrites at each launch (app/update_summary.h), and shows its texts as plain text.
-   Nothing is installed from here: a button copies the commands. The AI button has the launcher (TOTK_UPDATE_LAUNCHER, which
-   only a launcher sets) refresh the document at once, and the page shows it when it is written; the login button has it run
-   the AI command line's own login in Terminal. A controller's L1 / R1 reach the page, left / right pick a button, A presses
-   it and up / down scroll the text. */
+/* The settings panel's 更新 page (Mac; included by settings_panel.h; PR #1404). User 2026-10-31: show only that the
+   version is the newest, otherwise each newer commit's message; a button updates for the player, and what cannot be
+   updated says why and that the player updates the code and builds again by hand. Opening the page starts the launcher's
+   check (app/auto_update.h, --update-check: the checkout that made the app is fetched, not changed); the Update button
+   starts its install (--update-install: the game closes, the app is updated, the game opens again). Both run in a
+   cut-off copy of the launcher (TOTK_UPDATE_LAUNCHER, posix_spawn: this process's address space is not copied); the
+   page reads what they write, update/status.json in the game's data folder (the folder of TOTK_CONTROLS). An agent's
+   test session (TOTK_SLOT_OWNER other than user) starts neither. A controller's L1 / R1 reach the page, A presses the
+   button and up / down scroll the text. */
 #pragma once
 #include <errno.h>
 #include <fcntl.h>
@@ -13,116 +15,78 @@
 #include <sys/wait.h>
 #include <time.h>
 
-#ifndef UPDATE_TAB_PASTEBOARD
-#define UPDATE_TAB_PASTEBOARD NSPasteboard.generalPasteboard   /* a test passes its own, leaving the player's clipboard alone */
-#endif
-#ifndef UPDATE_TAB_OPEN
-#define UPDATE_TAB_OPEN(url) [NSWorkspace.sharedWorkspace openURL:(url)]   /* a test passes its own: Terminal stays closed */
-#endif
-#define UPDATE_TAB_AI "update/ai"
-enum { UPDATE_TAB_MAX_BYTES = 64 * 1024, UPDATE_TAB_STRIP_H = 46, UPDATE_TAB_SCROLL = 48, UPDATE_TAB_TIME_W = 150 };
+enum { UPDATE_TAB_MAX_BYTES = 64 * 1024, UPDATE_TAB_STRIP_H = 46, UPDATE_TAB_SCROLL = 48, UPDATE_TAB_RECHECK = 600 };
 
 static NSString *update_tab_folder(void) {
  const char *controls=getenv("TOTK_CONTROLS");
  return controls&&*controls?[@(controls).stringByDeletingLastPathComponent stringByAppendingPathComponent:@"update"]:nil;
 }
-static const char *update_tab_launcher(void) { const char *launcher=getenv("TOTK_UPDATE_LAUNCHER");return launcher&&*launcher?launcher:NULL; }
-/* The launcher refreshes the document, cut off from the game, which goes on: posix_spawn, as a copy of this process's address
-   space (a huge one) is what it must not make. */
-static void update_tab_refresh_document(void) {
- const char *launcher=update_tab_launcher();if(!launcher)return;
- char *const arguments[]={(char *)launcher,"--update-summary",NULL};
+static BOOL update_tab_held(void) { const char *owner=getenv("TOTK_SLOT_OWNER");return owner&&*owner&&strcmp(owner,"user"); }
+/* The launcher with these arguments, cut off from the game, which goes on. A test passes its own (UPDATE_TAB_SPAWN). */
+#ifndef UPDATE_TAB_SPAWN
+static BOOL update_tab_spawn(const char *mode, const char *arg) {
+ const char *launcher=getenv("TOTK_UPDATE_LAUNCHER");if(!launcher||!*launcher)return NO;
+ char *const arguments[]={(char *)launcher,(char *)mode,(char *)arg,NULL};
  posix_spawn_file_actions_t actions;posix_spawnattr_t attributes;
  posix_spawn_file_actions_init(&actions);posix_spawnattr_init(&attributes);
  posix_spawnattr_setflags(&attributes,POSIX_SPAWN_SETSID|POSIX_SPAWN_CLOEXEC_DEFAULT);
  for(int fd=0;fd<3;fd++)posix_spawn_file_actions_addopen(&actions,fd,"/dev/null",O_RDWR,0);
  extern char **environ;pid_t pid=0;
- if(!posix_spawn(&pid,launcher,&actions,&attributes,arguments,environ))
-  dispatch_async(dispatch_get_global_queue(QOS_CLASS_BACKGROUND,0),^{while(waitpid(pid,NULL,0)<0&&errno==EINTR){}});
+ BOOL ok=!posix_spawn(&pid,launcher,&actions,&attributes,arguments,environ);
+ if(ok)dispatch_async(dispatch_get_global_queue(QOS_CLASS_BACKGROUND,0),^{while(waitpid(pid,NULL,0)<0&&errno==EINTR){}});
  posix_spawn_file_actions_destroy(&actions);posix_spawnattr_destroy(&attributes);
+ return ok;
 }
-static NSString *update_tab_shell_quoted(const char *text) { return [NSString stringWithFormat:@"'%@'",[@(text) stringByReplacingOccurrencesOfString:@"'" withString:@"'\\''"]]; }
-/* Terminal runs the launcher's --ai-login: a script written here, from this process's environment, never from the document.
-   With this process's PATH and language, not the login shell's: it logs in to the command line the game asks, and answers in the page's language. */
-static void update_tab_login(void) {
- const char *launcher=update_tab_launcher(),*controls=getenv("TOTK_CONTROLS");NSString *folder=update_tab_folder();if(!launcher||!folder)return;
- NSString *path=[folder stringByAppendingPathComponent:@"ai-login.command"];
- NSMutableString *script=[NSMutableString stringWithFormat:@"#!/bin/sh\nexport TOTK_CONTROLS=%@\n",update_tab_shell_quoted(controls)];
- for(int i=0;i<2;i++){const char *name=i?"TOTK_UI_LANG":"PATH",*value=getenv(name);if(value)[script appendFormat:@"export %s=%@\n",name,update_tab_shell_quoted(value)];}
- [script appendFormat:@"%@ --ai-login\n",update_tab_shell_quoted(launcher)];
- if([script writeToFile:path atomically:YES encoding:NSUTF8StringEncoding error:nil]&&!chmod(path.fileSystemRepresentation,0700))UPDATE_TAB_OPEN([NSURL fileURLWithPath:path]);
-}
+#define UPDATE_TAB_SPAWN update_tab_spawn
+#endif
 static NSData *update_tab_read(void) {
- NSString *path=[update_tab_folder() stringByAppendingPathComponent:@"summary.json"];if(!path)return nil;
+ NSString *path=[update_tab_folder() stringByAppendingPathComponent:@"status.json"];if(!path)return nil;
  NSDictionary *about=[NSFileManager.defaultManager attributesOfItemAtPath:path error:nil];
  if(![about.fileType isEqualToString:NSFileTypeRegular]||about.fileSize>UPDATE_TAB_MAX_BYTES)return nil;
  NSData *data=[NSData dataWithContentsOfFile:path];return data.length<=UPDATE_TAB_MAX_BYTES?data:nil;
 }
-static BOOL update_tab_ai(void) { char word[16];return runtime_setting_word(UPDATE_TAB_AI,word,sizeof word)!=0; }
 static BOOL update_tab_number(id v) { return [v isKindOfClass:NSNumber.class]&&CFGetTypeID((__bridge CFTypeRef)v)!=CFBooleanGetTypeID(); }
-/* The document, or nil for anything that is not exactly what the launcher writes: the page then shows its empty state. */
+/* The document, or nil for anything that is not what the launcher writes. */
 static NSDictionary *update_tab_parse(NSData *data) {
  NSDictionary *d=data?[NSJSONSerialization JSONObjectWithData:data options:0 error:nil]:nil;
- if(![d isKindOfClass:NSDictionary.class]||!update_tab_number(d[@"version"])||![d[@"version"] isEqual:@1])return nil;
- for(NSString *k in @[@"key",@"installed",@"installed_date",@"status",@"verdict",@"reason",@"note",@"copy"])if(![d[k] isKindOfClass:NSString.class])return nil;
- for(NSString *k in @[@"total",@"generated_at"])if(!update_tab_number(d[k]))return nil;
- if(![d[@"points"] isKindOfClass:NSArray.class])return nil;
- for(id v in d[@"points"])if(![v isKindOfClass:NSString.class])return nil;
- if(![@[@"behind",@"latest",@"unknown"] containsObject:d[@"status"]]||![@[@"update",@"wait",@"skip",@""] containsObject:d[@"verdict"]])return nil;
+ if(![d isKindOfClass:NSDictionary.class]||![d[@"version"] isEqual:@1]||!update_tab_number(d[@"at"]))return nil;
+ if(![@[@"latest",@"behind",@"blocked",@"error",@"closing",@"updating",@"updated",@"failed"] containsObject:d[@"state"]])return nil;
+ for(NSString *k in @[@"reason",@"detail",@"installed",@"from",@"to"])if(d[k]&&![d[k] isKindOfClass:NSString.class])return nil;
+ if(d[@"commits"]){if(![d[@"commits"] isKindOfClass:NSArray.class])return nil;for(id v in d[@"commits"])if(![v isKindOfClass:NSString.class])return nil;}
+ if(d[@"total"]&&!update_tab_number(d[@"total"]))return nil;
  return d;
 }
-static NSString *update_tab_time(double at) {
- time_t t=(time_t)(at>0&&at<4e9?at:0);struct tm when;char text[16];
- if(!t||!localtime_r(&t,&when)||!strftime(text,sizeof text,"%m-%d %H:%M",&when))return @"";
- return [settings_text("内容更新于 ","Updated ") stringByAppendingString:@(text)];
+/* Why an update cannot go in (auto_update.h's reasons). */
+static NSString *update_tab_reason(NSString *reason) {
+ if([reason isEqualToString:@"no_repo"])return settings_text("这个 App 不知道打包它的项目文件夹在哪（或文件夹不在了）","This app does not know where the checkout that made it is (or it is gone)");
+ if([reason isEqualToString:@"no_access"])return settings_text("macOS 没有允许这个 App 访问项目文件夹（系统设置 › 隐私与安全性 › 文件与文件夹）","macOS did not let this app reach the checkout (System Settings › Privacy & Security › Files & Folders)");
+ if([reason isEqualToString:@"git_failed"])return settings_text("git 没能读项目文件夹","git could not read the checkout");
+ if([reason isEqualToString:@"fetch_failed"])return settings_text("连不上 GitHub","GitHub could not be reached");
+ if([reason isEqualToString:@"no_upstream"])return settings_text("项目的 main 没有跟踪上游","The checkout's main tracks no upstream");
+ if([reason isEqualToString:@"not_main"])return settings_text("项目文件夹不在 main 分支上","The checkout is not on main");
+ if([reason isEqualToString:@"local_changes"])return settings_text("项目文件夹里有没提交的改动","The checkout has uncommitted changes");
+ if([reason isEqualToString:@"unpushed"])return settings_text("项目文件夹里有上游没有的提交","The checkout has commits upstream does not");
+ if([reason isEqualToString:@"update_failed"])return settings_text("更新 App 没有成功，App 保持原样（日志：update/update.log）","Updating the app did not work and it was left as it was (log: update/update.log)");
+ return reason?:@"";
 }
-static NSAttributedString *update_tab_text(NSDictionary *d, BOOL ai) {
- NSMutableAttributedString *all=[NSMutableAttributedString new];
- void (^add)(NSString *,NSFont *,NSColor *,CGFloat)=^(NSString *text,NSFont *font,NSColor *color,CGFloat indent){
-  NSMutableParagraphStyle *style=[NSMutableParagraphStyle new];style.lineSpacing=2;style.paragraphSpacing=5;style.headIndent=indent;
-  [all appendAttributedString:[[NSAttributedString alloc] initWithString:[(all.length?@"\n":@"") stringByAppendingString:text]
-   attributes:@{NSFontAttributeName:font,NSForegroundColorAttributeName:color,NSParagraphStyleAttributeName:style}]];};
- NSFont *plain=[NSFont systemFontOfSize:12.5],*strong=[NSFont systemFontOfSize:13 weight:NSFontWeightSemibold],*small=[NSFont systemFontOfSize:11.5];
- NSColor *white=[NSColor colorWithCalibratedWhite:0.92 alpha:1],*dim=[NSColor colorWithCalibratedWhite:0.7 alpha:1],*accent=[NSColor colorWithCalibratedRed:0.7 green:0.95 blue:0.8 alpha:1];
- NSString *offLine=settings_text("开启后会用你已登录的 claude、codex 或 qodercli 总结，用的是你自己的账号。","It uses the claude, codex or qodercli you are logged in to, on your own account.");
- if(!d){
-  add(settings_text("还没有更新信息，下次启动游戏时会查一次","No update information yet; it is checked the next time the game starts"),plain,white,0);
-  if(!ai)add(offLine,small,dim,0);
-  return all;
- }
- NSString *verdict=d[@"verdict"],*reason=d[@"reason"],*installed=d[@"installed"],*date=d[@"installed_date"];BOOL behind=[d[@"status"] isEqualToString:@"behind"];
- if(installed.length){
-  NSMutableString *line=[settings_text("当前版本 ","Installed ") mutableCopy];[line appendString:installed];
-  if(date.length)[line appendFormat:@"%@%@%@",settings_text("（"," ("),date,settings_text("）",")")];
-  long long total=[d[@"total"] longLongValue];
-  if(behind)[line appendFormat:total==1?@(TOTK_UI(" · 上游之后 %lld 个提交"," · %lld commit upstream since")):@(TOTK_UI(" · 上游之后 %lld 个提交"," · %lld commits upstream since")),total];
-  add(line,small,dim,0);
- }
- if(!ai)add(offLine,small,dim,0);   /* above the list: the button beside it acts at once, and the list may run past the fold */
- NSString *advice=[verdict isEqualToString:@"update"]?settings_text("建议：值得更新","Advice: worth updating"):[verdict isEqualToString:@"wait"]?settings_text("建议：可以等等","Advice: it can wait"):
-  [verdict isEqualToString:@"skip"]?settings_text("建议：不用更新","Advice: no need to update"):nil;
- if(advice)add(reason.length?[NSString stringWithFormat:@"%@  %@",advice,reason]:advice,strong,accent,0);
- else if(ai&&update_tab_launcher()&&behind&&[d[@"source"] isEqual:@"fallback"]&&![d[@"note"] length])add(settings_text("AI 正在总结…","The AI is summarizing…"),strong,accent,0);   /* the launcher's run writes a note or an answer when it ends */
- for(NSString *point in d[@"points"])add([@"•  " stringByAppendingString:point],plain,white,12);
- if([d[@"note"] length])add(d[@"note"],small,dim,0);
- if(behind&&[d[@"copy"] length])add(settings_text("复制的命令要在退出游戏后，到仓库文件夹里运行。","Quit the game, then run the copied commands in the repository folder."),small,dim,0);
- return all;
+static NSString *update_tab_by_hand(void) {
+ return settings_text("请自己更新代码再重新编译：在项目文件夹里运行 git pull，然后 python3.14 update_runtime.py \"<这个 App>\"（不行就用 build_app.py 重新打包）。",
+  "Please update the code and build again yourself: git pull in your checkout, then python3.14 update_runtime.py \"<this app>\" (or build the app again with build_app.py).");
 }
 
 @interface TOTKUpdatePage:NSView
 @property(strong) NSScrollView *scroll;
-@property(strong) NSTextField *text, *status, *time;
-@property(strong) NSButton *commandButton, *loginButton, *aiSwitch;
-@property(strong) NSDictionary *summary;   /* the document on screen; nil: the empty state */
+@property(strong) NSTextField *text, *status;
+@property(strong) NSButton *updateButton;
+@property(strong) NSDictionary *summary;   /* the document on screen; nil: none yet */
 @property(strong) NSData *shownData;
-@property BOOL shown, shownAI;
+@property double checkedAt;   /* when this run last asked for a check (0: never) */
+@property BOOL shown, pressed;
+-(void)show;
 -(void)refresh;
 -(void)scrollBy:(CGFloat)distance;
 @end
 @implementation TOTKUpdatePage
--(NSButton *)buttonWithAction:(SEL)action{
- NSButton *button=[NSButton buttonWithTitle:@"" target:self action:action];button.refusesFirstResponder=YES;button.font=[NSFont systemFontOfSize:12];button.wantsLayer=YES;[self addSubview:button];return button;
-}
 -(instancetype)initWithFrame:(NSRect)frame{
  if(!(self=[super initWithFrame:frame]))return nil;
  CGFloat w=frame.size.width,h=frame.size.height;
@@ -132,55 +96,68 @@ static NSAttributedString *update_tab_text(NSDictionary *d, BOOL ai) {
  NSTextField *text=[NSTextField wrappingLabelWithString:@""];text.selectable=NO;text.refusesFirstResponder=YES;[list addSubview:text];
  scroll.documentView=list;[self addSubview:scroll];self.scroll=scroll;self.text=text;
  NSTextField *status=[NSTextField labelWithString:@""];status.font=[NSFont systemFontOfSize:12 weight:NSFontWeightMedium];status.textColor=[NSColor colorWithCalibratedRed:0.7 green:0.95 blue:0.8 alpha:1];
- status.lineBreakMode=NSLineBreakByTruncatingTail;status.refusesFirstResponder=YES;status.frame=NSMakeRect(18,27,fmax(0,w-32-UPDATE_TAB_TIME_W),17);[self addSubview:status];self.status=status;
- NSTextField *time=[NSTextField labelWithString:@""];time.font=[NSFont systemFontOfSize:11];time.textColor=[NSColor colorWithCalibratedWhite:0.6 alpha:1];
- time.lineBreakMode=NSLineBreakByTruncatingTail;time.refusesFirstResponder=YES;time.alignment=NSTextAlignmentRight;time.frame=NSMakeRect(w-14-UPDATE_TAB_TIME_W,28,UPDATE_TAB_TIME_W,15);[self addSubview:time];self.time=time;
- self.commandButton=[self buttonWithAction:@selector(copyClicked:)];self.loginButton=[self buttonWithAction:@selector(loginClicked:)];self.aiSwitch=[self buttonWithAction:@selector(aiClicked:)];
+ status.lineBreakMode=NSLineBreakByTruncatingTail;status.refusesFirstResponder=YES;status.frame=NSMakeRect(18,6,fmax(0,w-200),17);[self addSubview:status];self.status=status;
+ NSButton *button=[NSButton buttonWithTitle:@"" target:self action:@selector(updateClicked:)];button.refusesFirstResponder=YES;button.font=[NSFont systemFontOfSize:12];button.wantsLayer=YES;[self addSubview:button];self.updateButton=button;
  return self;
 }
--(NSString *)statusLine{
- NSString *state=self.summary[@"status"];
- return [state isEqualToString:@"behind"]?settings_text("有新版本","Update available"):[state isEqualToString:@"latest"]?settings_text("已是最新","Up to date"):
-  [state isEqualToString:@"unknown"]?settings_text("暂时查不到更新","Updates cannot be checked right now"):@"";
+/* The page opened: a check, unless one of the last UPDATE_TAB_RECHECK seconds is here or an update is under way. */
+-(void)show{
+ double now=(double)time(NULL);NSString *state=update_tab_parse(update_tab_read())[@"state"];
+ if(!update_tab_held()&&!self.pressed&&![@[@"closing",@"updating"] containsObject:state?:@""]&&(!self.checkedAt||now-self.checkedAt>=UPDATE_TAB_RECHECK)){
+  NSString *folder=update_tab_folder();if(folder)[NSFileManager.defaultManager createDirectoryAtPath:folder withIntermediateDirectories:YES attributes:nil error:nil];
+  if(UPDATE_TAB_SPAWN("--update-check",NULL))self.checkedAt=now;
+ }
+ self.shown=NO;[self refresh];
 }
 -(void)refresh{
- NSData *data=update_tab_read();BOOL ai=update_tab_ai();
- if(self.shown&&ai==self.shownAI&&(data==self.shownData||[data isEqual:self.shownData]))return;   /* the scroll position stays */
- self.shown=YES;self.shownAI=ai;self.shownData=data;self.summary=update_tab_parse(data);
- NSDictionary *d=self.summary;CGFloat w=self.frame.size.width;
- self.text.attributedStringValue=update_tab_text(d,ai);
+ NSData *data=update_tab_read();
+ if(self.shown&&(data==self.shownData||[data isEqual:self.shownData]))return;   /* the scroll position stays */
+ self.shown=YES;self.shownData=data;NSDictionary *d=self.summary=update_tab_parse(data);
+ NSMutableAttributedString *all=[NSMutableAttributedString new];
+ void (^add)(NSString *,NSFont *,NSColor *,CGFloat)=^(NSString *text,NSFont *font,NSColor *color,CGFloat indent){
+  NSMutableParagraphStyle *style=[NSMutableParagraphStyle new];style.lineSpacing=2;style.paragraphSpacing=5;style.headIndent=indent;
+  [all appendAttributedString:[[NSAttributedString alloc] initWithString:[(all.length?@"\n":@"") stringByAppendingString:text]
+   attributes:@{NSFontAttributeName:font,NSForegroundColorAttributeName:color,NSParagraphStyleAttributeName:style}]];};
+ NSFont *plain=[NSFont systemFontOfSize:12.5],*strong=[NSFont systemFontOfSize:13 weight:NSFontWeightSemibold],*small=[NSFont systemFontOfSize:11.5];
+ NSColor *white=[NSColor colorWithCalibratedWhite:0.92 alpha:1],*dim=[NSColor colorWithCalibratedWhite:0.7 alpha:1],*accent=[NSColor colorWithCalibratedRed:0.7 green:0.95 blue:0.8 alpha:1],
+  *warn=[NSColor colorWithCalibratedRed:1 green:0.8 blue:0.55 alpha:1];
+ const char *c=getenv("TOTK_SOURCE_COMMIT");NSString *running=c&&*c?@(c):nil,*state=d[@"state"];
+ NSString *version=[settings_text("当前版本 ","Version ") stringByAppendingString:running?:settings_text("未知","unknown")];
+ BOOL newest=[state isEqualToString:@"latest"]||([state isEqualToString:@"updated"]&&running&&[d[@"to"] hasPrefix:running]);
+ if(newest)add([version stringByAppendingString:settings_text(" · 已是最新版"," · the newest")],strong,accent,0);
+ else{
+  add(version,strong,white,0);
+  NSArray<NSString *> *commits=d[@"commits"];long long total=[d[@"total"] longLongValue];
+  if(commits.count&&![state isEqualToString:@"updated"]){
+   add(total>(long long)commits.count?[NSString stringWithFormat:@(TOTK_UI("最新版 %@ 多了 %lld 个提交（下面是最新的 %lu 个）：","The newest, %@, has %lld more commits (the newest %lu below):")),d[@"to"],total,(unsigned long)commits.count]:
+    [NSString stringWithFormat:@(TOTK_UI("最新版 %@ 多了这些提交：","The newest, %@, adds:")),d[@"to"]],plain,white,0);
+   for(NSString *title in commits)add([@"•  " stringByAppendingString:title],plain,white,12);
+  }
+  if([@[@"blocked",@"error",@"failed"] containsObject:state?:@""]){
+   add([update_tab_reason(d[@"reason"]) stringByAppendingString:settings_text("，没法替你更新。",", so it cannot be updated for you.")],plain,warn,0);
+   if([d[@"detail"] length])add(d[@"detail"],small,dim,0);
+   add(update_tab_by_hand(),plain,warn,0);
+  }
+ }
+ BOOL held=update_tab_held();
+ self.status.stringValue=held?settings_text("测试运行：不检查也不更新","A test run: no check, no update"):
+  [state isEqualToString:@"closing"]||self.pressed?settings_text("正在关闭游戏去更新…","Closing the game to update…"):
+  [state isEqualToString:@"updating"]?settings_text("正在更新…","Updating…"):
+  [state isEqualToString:@"updated"]&&!newest?[NSString stringWithFormat:@"%@ %@%@",settings_text("已更新到","Updated to"),d[@"to"],settings_text("，下次启动生效","; from the next start")]:
+  !d&&self.checkedAt?settings_text("正在检查…","Checking…"):@"";
+ self.updateButton.hidden=held||self.pressed||![state isEqualToString:@"behind"];
+ self.updateButton.title=settings_text("更新（会关闭游戏，更新完自动重新打开）","Update (closes the game, opens it again when done)");
+ CGFloat w=self.frame.size.width;[self.updateButton sizeToFit];CGFloat bw=self.updateButton.frame.size.width;self.updateButton.frame=NSMakeRect(w-14-bw,2,bw,26);
+ self.text.attributedStringValue=all;
  CGFloat width=fmax(0,w-36),height=ceil([self.text.cell cellSizeForBounds:NSMakeRect(0,0,width,CGFLOAT_MAX)].height),room=self.scroll.contentSize.height;
  self.text.frame=NSMakeRect(18,2,width,height);self.scroll.documentView.frame=NSMakeRect(0,0,w,fmax(height+8,room));
  [self.scroll.documentView scrollPoint:NSZeroPoint];
- self.status.stringValue=[self statusLine];
- self.time.stringValue=d?update_tab_time([d[@"generated_at"] doubleValue]):@"";
- self.commandButton.hidden=!([d[@"status"] isEqualToString:@"behind"]&&[d[@"copy"] length]);
- self.commandButton.title=settings_text("复制更新命令","Copy the update command");
- self.loginButton.hidden=!(ai&&update_tab_launcher()&&[d[@"login"] isEqual:@YES]);
- self.loginButton.title=settings_text("登录 AI","Log in to the AI");
- self.aiSwitch.title=ai?settings_text("关闭 AI 总结","Turn off the AI summary"):settings_text("开启 AI 总结","Turn on the AI summary");
- CGFloat right=w-14;
- for(NSButton *b in @[self.aiSwitch,self.loginButton,self.commandButton]){if(b.hidden)continue;[b sizeToFit];CGFloat bw=b.frame.size.width;b.frame=NSMakeRect(right-bw,0,bw,26);right-=bw+6;}
 }
--(void)copyClicked:(id)sender{(void)sender;
- NSPasteboard *board=UPDATE_TAB_PASTEBOARD;[board clearContents];[board setString:self.summary[@"copy"] forType:NSPasteboardTypeString];
- self.status.stringValue=[NSString stringWithFormat:@"%@ · %@",[self statusLine],settings_text("命令已复制","command copied")];
+-(void)updateClicked:(id)sender{(void)sender;
+ if(self.pressed)return;   /* once: the panel drops the button from its targets at its next tick */
+ char pid[24];snprintf(pid,sizeof pid,"%d",(int)getpid());
+ if(UPDATE_TAB_SPAWN("--update-install",pid)){self.pressed=YES;self.shown=NO;[self refresh];}
  [self.window makeFirstResponder:self.window.contentView];   /* key 1 and Esc keep reaching the window */
-}
--(void)aiClicked:(id)sender{(void)sender;
- if(update_tab_ai())runtime_setting_remove(UPDATE_TAB_AI);
- else{
-  NSString *folder=update_tab_folder();if(folder)[NSFileManager.defaultManager createDirectoryAtPath:folder withIntermediateDirectories:YES attributes:nil error:nil];
-  runtime_setting_save(UPDATE_TAB_AI,"on","AI summary");
- }
- update_tab_refresh_document();
- [self refresh];
- [self.window makeFirstResponder:self.window.contentView];
-}
--(void)loginClicked:(id)sender{(void)sender;
- update_tab_login();
- self.status.stringValue=[NSString stringWithFormat:@"%@ · %@",[self statusLine],settings_text("已打开登录窗口","login window opened")];
- [self.window makeFirstResponder:self.window.contentView];
 }
 -(void)scrollBy:(CGFloat)distance{
  NSClipView *clip=self.scroll.contentView;CGFloat most=fmax(0,self.scroll.documentView.frame.size.height-clip.bounds.size.height);
@@ -190,15 +167,15 @@ static NSAttributedString *update_tab_text(NSDictionary *d, BOOL ai) {
 
 @interface TOTKSettingsPanel (UpdateTab)
 -(NSView *)updatePageWithFrame:(NSRect)frame;
+-(void)showUpdatePage;
 -(void)refreshUpdatePage;
 -(void)scrollUpdatePage:(int)step;
 @end
 @implementation TOTKSettingsPanel (UpdateTab)
 -(NSView *)updatePageWithFrame:(NSRect)frame{self.updatePageTargets=[NSMutableArray array];return [[TOTKUpdatePage alloc] initWithFrame:frame];}
--(void)refreshUpdatePage{
- TOTKUpdatePage *page=(TOTKUpdatePage *)self.pages[SETTINGS_PAGE_UPDATE];[page refresh];
- [self.updatePageTargets removeAllObjects];
- for(NSButton *b in @[page.commandButton,page.loginButton,page.aiSwitch])if(!b.hidden)[self.updatePageTargets addObject:b];
-}
+/* selectPage: opens the page (a check); the panel's tick only redraws it from the document. */
+-(void)updatePageTargetsFrom:(TOTKUpdatePage *)page{[self.updatePageTargets removeAllObjects];if(!page.updateButton.hidden)[self.updatePageTargets addObject:page.updateButton];}
+-(void)showUpdatePage{TOTKUpdatePage *page=(TOTKUpdatePage *)self.pages[SETTINGS_PAGE_UPDATE];[page show];[self updatePageTargetsFrom:page];}
+-(void)refreshUpdatePage{TOTKUpdatePage *page=(TOTKUpdatePage *)self.pages[SETTINGS_PAGE_UPDATE];[page refresh];[self updatePageTargetsFrom:page];}
 -(void)scrollUpdatePage:(int)step{[(TOTKUpdatePage *)self.pages[SETTINGS_PAGE_UPDATE] scrollBy:step*UPDATE_TAB_SCROLL];}
 @end
