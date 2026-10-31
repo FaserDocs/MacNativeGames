@@ -81,7 +81,7 @@ Effects (Tears of the Kingdom 1.4.3 where a row names no game; each choice acts 
 - **FXAA anti-aliasing:** on (the game's own) or off: off leaves the 3D picture as the game's tone mapping made it, sharper edges with their stair steps. Kept in `graphics-fxaa.txt`.
 - **Depth of field:** on (the game's own) or off: off keeps the camera from taking any depth-of-field request, so cutscenes and events no longer blur the background (they play on as before). Kept in `graphics-dof.txt`.
 - **Sharpening:** off, 25 %, 50 %, 75 % or 100 % (FSR 1 RCAS on the 3D picture; the UI drawn after it is not touched), with or without FXAA. Kept in `graphics-sharpen.txt`.
-- **Ambient occlusion, Grass, Character light, Volumetric fog, Fog:** switches, all on by default. Off leaves out the soft corner shade, the field grass, the extra light the game puts on Link, the ray-marched light in the air, or the layers of haze added over the distance. Kept in `graphics-effects.txt` (the ones that are off). More effects come as they are found.
+- **Ambient occlusion, Grass, Volumetric fog, Fog:** switches, all on by default. Off leaves out the soft corner shade, the field grass, the ray-marched light in the air, or the layers of haze added over the distance. Kept in `graphics-effects.txt` (the ones that are off). More effects come as they are found.
 
 Update: the version, and either that it is the newest or each newer commit's message (see [install.md](install.md#update-the-app)); when it can be updated for you, an **Update** button that closes the game, updates the app and opens it again; when not, why, and that you update the code and build again yourself.
 

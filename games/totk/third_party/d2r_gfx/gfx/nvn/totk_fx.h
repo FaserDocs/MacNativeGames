@@ -13,7 +13,8 @@ static const fx_effect k_fx[] = {
     {"ao", "环境光遮蔽", "Ambient occlusion", {0}, {0}},   // totk_ssao.h
     {"shadow", "阴影", "Shadows", {0}, {0}},   // every shadow-map comparison reads lit (nvn_mtl.m) and the shadow pre-pass's term too (totk_ssao.h: its far terrain shadow compares by hand)
     {"grass", "草", "Grass", {"33099f8c133950f5"}, {0}},   // the field's grass blades (2026-10-30 survey, v143-grass)
-    {"charlight", "角色补光", "Character light", {"61315f715cdf30ed"}, {0}},   // the extra light on Link
+    /* The extra light the game puts on Link (61315f715cdf30ed) had a switch until 2026-10-31; the user: "角色补光 去掉 默认开
+       不能关". It is always drawn; a "charlight" left in graphics-effects.txt is a word no effect has, so it is ignored. */
     /* The fog of the air: the scattering images at 1/8 and 1/16 of the screen (240x135 / 120x67 at 1080p) take additive
        draws, which a later pass spreads over the picture. Volumetric fog: the ray-marched light in the air (3231347c, a
        2300-line loop over the view ray). Fog: the two short layers added to the same images (c7df2e96 / f459822d, one
