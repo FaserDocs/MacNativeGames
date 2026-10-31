@@ -196,6 +196,7 @@ python3.14 games/totk/ios/tools/install_device.py "<文件夹>/TOTK-Vision.app" 
 - **本仓库有新版本**（`git pull` 之后）：
   - 先退出游戏，再运行 `python3.14 update_runtime.py "<App 路径>"`，约一分钟更新完，不需要游戏文件和密钥。
   - 它提示启动着色器不再匹配时，加上 `--seed`。
+- **「更新」页**（设置面板，按 1）显示 App 是不是上游最新的 `main`，不是就列出每个新提交。打开这一页时，会在打包 App 的项目文件夹里拉取上游（不改动其中任何文件）。点**更新**按钮：游戏关闭，项目的 `main` 快进到上游（`git pull --ff-only`），运行 `update_runtime.py`（它要求时加 `--seed`），期间有一个小窗口显示正在更新，完成后重新打开游戏。项目不在 main 分支、有没提交的改动或上游没有的提交、找不到或连不上、或更新失败时，会说明原因，请你自己更新（本列表第一条）。2026 年 10 月 31 日以前打的 App 要先手动运行一次 `update_runtime.py`，之后才知道自己的项目文件夹。
 - **退回更新前的版本**（新版本玩起来有问题时）：
   - 先退出游戏，用 `git reflog` 找到 `git pull` 之前所在的提交（`pull` 那一行下面的一行）。
   - 运行 `git checkout <那个提交>`（git 会提示 "detached HEAD"，这是正常的），再运行一次 `python3.14 update_runtime.py "<App 路径>"`；它要求时加上 `--seed`。

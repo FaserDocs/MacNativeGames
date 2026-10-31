@@ -1,5 +1,10 @@
 /* The production Mac settings panel (key 1, runtime/settings_panel.h), its keyboard handling and the calls each row makes.
    No guest, save files, game data or GPU commands are used. */
+#import <Foundation/Foundation.h>
+static char spawned[256];   /* the Update page's last request to the launcher (update_tab.h), never a real one */
+static BOOL spawn_ok = 1;
+static BOOL probe_spawn(const char *mode, const char *arg) { if (!spawn_ok) return 0; snprintf(spawned, sizeof spawned, "%s %s", mode, arg ? arg : ""); return 1; }
+#define UPDATE_TAB_SPAWN probe_spawn
 #include "../games/totk/runtime/frontend.m"
 #include "../games/totk/runtime/input.c"
 #include "../games/totk/third_party/d2r_gfx/gfx/nvn/fps_overlay.h"
@@ -56,6 +61,9 @@ static int fakePadType = GAMEPAD_TYPE_AUTO, fakePadDetected = GAMEPAD_TYPE_PLAYS
 int runtime_gamepad_type_set(int type) { return fakePadType = type; }
 int runtime_gamepad_type(int *detected) { if (detected) *detected = fakePadDetected; return fakePadType; }
 int runtime_gamepad_battery_percent(void) { return -1; }
+static int fakePadBackground;
+int runtime_gamepad_background_enabled(void) { return fakePadBackground; }
+void runtime_gamepad_background_set(int on) { fakePadBackground = !!on; }
 int runtime_gamepad_battery_left_percent(void) { return -1; }
 int runtime_mouse_set(int on) { return fakeMouse = !!on; }
 int runtime_mouse_enabled(void) { return fakeMouse; }
@@ -84,7 +92,11 @@ static int sharedSaves;   /* saves of a setting both games share (runtime_shared
 void runtime_shared_setting_save(const char *name, const char *word, const char *what) { sharedSaves++; runtime_setting_save(name, word, what); }
 int runtime_shared_setting_word(const char *name, char *word, size_t size) { return runtime_setting_word(name, word, size); }
 static char removedName[64];
-void runtime_setting_remove(const char *name) { snprintf(removedName, sizeof removedName, "%s", name); }
+void runtime_setting_remove(const char *name) {
+    snprintf(removedName, sizeof removedName, "%s", name);
+    const char *dir = getenv("SETTINGS_TEST_DIR"); if (!dir) return;
+    char path[4096]; snprintf(path, sizeof path, "%s/%s", dir, name); unlink(path);
+}
 /* runtime/gamepad.m's controller layout and mouse sensitivity, kept here. */
 static uint16_t fakeMap[CONTROLLER_BUTTONS]; static uint8_t fakeModes[CONTROLLER_BUTTONS];
 void runtime_controller_map_get(uint16_t *map, uint8_t *modes) { memcpy(map, fakeMap, sizeof fakeMap); memcpy(modes, fakeModes, sizeof fakeModes); }
@@ -133,10 +145,18 @@ void runtime_autoload_user_input(void) {}
 uint64_t runtime_now_ns(void) { return clock_gettime_nsec_np(CLOCK_UPTIME_RAW); }
 
 #define SIZE(w, h) ((uint64_t)(h) << 32 | (w))
-static void tick(void) { [NSRunLoop.currentRunLoop runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.02]]; }
-/* Key 1 toggles the panel on the main queue; a run loop pass may end before it is served (right after a key binding was
-   captured), so two. */
-static void press(unsigned key) { runtime_input_key_synthetic(key, 1); runtime_input_key_synthetic(key, 0); tick(); tick(); }
+/* Key 1, a page that needs another panel and the aspect ratio's window size all act through the main queue. This returns when
+   what is queued so far has run: the queue keeps its order, so a block queued behind them shows it. A fixed wait does not
+   do: a run loop pass can use up the time before it looks at the queue (10-19 ms on an M5 Pro right after the panel with the
+   drawings was made, more on a busy runner) and then leaves, the queue unserved. */
+static void tick(void) {
+    __block BOOL served = NO;
+    dispatch_async(dispatch_get_main_queue(), ^{ served = YES; });
+    NSDate *limit = [NSDate dateWithTimeIntervalSinceNow:20];   /* within the test's 35 s for a run */
+    while (!served && limit.timeIntervalSinceNow > 0) [NSRunLoop.currentRunLoop runMode:NSDefaultRunLoopMode beforeDate:limit];
+    if (!served) { fprintf(stderr, "the main queue was not served in 20 s\n"); abort(); }
+}
+static void press(unsigned key) { runtime_input_key_synthetic(key, 1); runtime_input_key_synthetic(key, 0); tick(); }
 static void key_event(unsigned short code, BOOL down) {
     NSEvent *e = [NSEvent keyEventWithType:down ? NSEventTypeKeyDown : NSEventTypeKeyUp location:NSZeroPoint modifierFlags:0
                                  timestamp:0 windowNumber:window.windowNumber context:nil characters:@"x"
@@ -163,12 +183,13 @@ static void shows(NSString *title, NSString *choice) {
     NSString *now = menu(title).titleOfSelectedItem;
     if (![now isEqualToString:choice]) { fprintf(stderr, "%s shows %s, expected %s\n", title.UTF8String, now.UTF8String, choice.UTF8String); abort(); }
 }
-/* The window's content: that height (or the most the screen's visible area holds), 16:9. */
+/* The window's content: that height (or the most the screen's visible area holds), 16:9, each side within a point of the
+   exact size: whole points cannot always be 16:9 (a 1512-point screen holds 1512x850.5; 1511x850 fits, 851 high would need 1513). */
 static void window_is(CGFloat h) {
     NSRect room = [window contentRectForFrameRect:(window.screen ?: NSScreen.mainScreen).visibleFrame];
-    CGFloat want = round(fmin(h, fmin(room.size.height, room.size.width * 9 / 16)));
+    CGFloat want = fmin(h, fmin(room.size.height, room.size.width * 9 / 16));
     NSSize now = window.contentView.bounds.size;
-    if (fabs(now.height - want) > 1 || fabs(now.width - round(want * 16 / 9)) > 1) {
+    if (fabs(now.height - want) > 1 || fabs(now.width - want * 16 / 9) > 1) {
         fprintf(stderr, "window %.0fx%.0f, expected height %.0f at 16:9\n", now.width, now.height, want); abort();
     }
 }
@@ -271,10 +292,154 @@ static void frame_probe(void) {
     puts("pass: frame lock choices, shared persistence, interpolation, overrides, invalid/deleted files, key 9 inert");
 }
 
+/* The 更新 page (update_tab.h), on its own so it also runs where the window sizes in main do not fit the screen. */
+@interface UpdateProbeClicks:NSObject
+@property int hits;
+@end
+@implementation UpdateProbeClicks
+-(void)hit:(id)sender{(void)sender;self.hits++;}
+@end
+static NSString *updateDir;
+static double padAt = 1000;
+enum { PAD_A = 1u << 0, PAD_L1 = 1u << 6, PAD_R1 = 1u << 7, PAD_UP = 1u << 13, PAD_DOWN = 1u << 15 };
+static void pad_press(uint64_t buttons) {
+    [settingsPanel controllerPad:(RuntimeGamepadState){.connected = 1} time:padAt += 1 active:YES];
+    [settingsPanel controllerPad:(RuntimeGamepadState){.connected = 1, .buttons = buttons} time:padAt += 0.1 active:YES];
+}
+static TOTKUpdatePage *update_page(void) { return (TOTKUpdatePage *)settingsPanel.pages[SETTINGS_PAGE_UPDATE]; }
+static NSString *update_text(void) { return update_page().text.stringValue; }
+static void update_bytes(NSData *bytes) {
+    NSString *path = [updateDir stringByAppendingPathComponent:@"status.json"];
+    if (bytes) assert([bytes writeToFile:path atomically:YES]); else [NSFileManager.defaultManager removeItemAtPath:path error:nil];
+    [settingsPanel refreshUpdatePage]; [settingsPanel updateTargets];
+}
+/* A check as app/auto_update.h writes it, with these fields changed. */
+static NSDictionary *update_doc(NSDictionary *fields) {
+    NSMutableDictionary *d = [@{@"version": @1, @"at": @1793000000.5, @"state": @"behind", @"from": @"ab6ebe8", @"to": @"f0cfa3f",
+        @"installed": @"ab6ebe8", @"commits": @[@"fix: 一个修复", @"feat: 一个功能"], @"total": @2} mutableCopy];
+    [d addEntriesFromDictionary:fields]; return d;
+}
+static void update_status(NSDictionary *fields) { update_bytes([NSJSONSerialization dataWithJSONObject:update_doc(fields) options:0 error:nil]); }
+static void says(NSString *part) {
+    if ([update_text() containsString:part]) return;
+    fprintf(stderr, "the page lacks %s:\n%s\n", part.UTF8String, update_text().UTF8String); abort();
+}
+static void lacks(NSString *part) {
+    if (![update_text() containsString:part]) return;
+    fprintf(stderr, "the page should not say %s:\n%s\n", part.UTF8String, update_text().UTF8String); abort();
+}
+static void status_is(NSString *text) {
+    if ([update_page().status.stringValue isEqualToString:text]) return;
+    fprintf(stderr, "status %s, expected %s\n", update_page().status.stringValue.UTF8String, text.UTF8String); abort();
+}
+static void update_probe(void) {
+    unsetenv("TOTK_SLOT_OWNER"); setenv("TOTK_SOURCE_COMMIT", "ab6ebe8", 1);
+    const char *dir = getenv("SETTINGS_TEST_DIR"); assert(dir);
+    updateDir = [@(dir) stringByAppendingPathComponent:@"update"];
+    assert([NSFileManager.defaultManager createDirectoryAtPath:updateDir withIntermediateDirectories:YES attributes:nil error:nil]);
+    [NSFileManager.defaultManager removeItemAtPath:[updateDir stringByAppendingPathComponent:@"status.json"] error:nil];
+    setenv("TOTK_CONTROLS", [@(dir) stringByAppendingPathComponent:@"controls.txt"].UTF8String, 1);
+    settings_test_output_init();
+    window = [[NSWindow alloc] initWithContentRect:NSMakeRect(0, 0, 1280, 720) styleMask:NSWindowStyleMaskTitled backing:NSBackingStoreBuffered defer:NO];
+    window.contentView = [[TOTKInputView alloc] initWithFrame:NSMakeRect(0, 0, 1280, 720)];
+    settings_show(1); assert(settingsOpen);
+    assert(settingsPanel.tabs.segmentCount == SETTINGS_PAGES && SETTINGS_PAGE_UPDATE == SETTINGS_PAGES - 1 && [[settingsPanel.tabs labelForSegment:SETTINGS_PAGE_UPDATE] isEqualToString:@"Update"]);
+    for (TOTKSettingRow *r in settingsPanel.allRows) assert(r.page != SETTINGS_PAGE_UPDATE);
+    assert(!spawned[0]);   /* nothing is asked before the page opens */
+
+    /* The display page: the controller past the last row (it used to raise here), the contribute button clicks. Its real
+       action could send a player's list, so the button is pointed at the probe. */
+    assert(settingsPanel.page == SETTINGS_PAGE_DISPLAY);
+    UpdateProbeClicks *clicks = [UpdateProbeClicks new]; NSButton *contribute = settingsPanel.displayButtons[1];
+    contribute.target = clicks; contribute.action = @selector(hit:);
+    pad_press(PAD_DOWN); assert(g_settings_controller_active);
+    for (int n = 0; n < 20 && settingsPanel.controllerTargets[(NSUInteger)settingsPanel.controllerIndex] != contribute; n++) pad_press(PAD_DOWN);
+    assert(settingsPanel.controllerTargets[(NSUInteger)settingsPanel.controllerIndex] == contribute && contribute.layer.borderWidth == 2);
+    pad_press(PAD_A); assert(clicks.hits == 1);
+
+    /* L1 / R1: the page is the last tab; opening it asks the launcher for a check. */
+    pad_press(PAD_L1); assert(settingsPanel.page == SETTINGS_PAGE_UPDATE && settingsPanel.tabs.selectedSegment == SETTINGS_PAGE_UPDATE);
+    assert(!strcmp(spawned, "--update-check ") && settingsPanel.rows.count == 0);
+    for (NSButton *b in settingsPanel.displayButtons) assert(b.hidden);
+    for (NSButton *b in settingsPanel.effectsButtons) assert(b.hidden);
+    for (NSButton *b in settingsPanel.resetButtons) assert(b.hidden);
+    TOTKUpdatePage *page = update_page(); NSButton *button = page.updateButton;
+    assert(!page.text.selectable && page.text.refusesFirstResponder && button.refusesFirstResponder);
+    status_is(@"Checking…"); assert([update_text() isEqualToString:@"Version ab6ebe8"] && button.hidden && settingsPanel.controllerTargets.count == 0);
+    /* Again within ten minutes: no second check. */
+    spawned[0] = 0; pad_press(PAD_R1); pad_press(PAD_L1); assert(settingsPanel.page == SETTINGS_PAGE_UPDATE && !spawned[0]);
+
+    /* User 2026-10-31: the newest says just that; otherwise each newer commit's message and the Update button. */
+    update_status(@{@"state": @"latest", @"commits": @[]}); status_is(@""); assert([update_text() isEqualToString:@"Version ab6ebe8 · the newest"] && button.hidden);
+    update_status(@{});
+    assert([update_text() isEqualToString:@"Version ab6ebe8\nThe newest, f0cfa3f, adds:\n•  fix: 一个修复\n•  feat: 一个功能"]);
+    assert(!button.hidden && [button.title isEqualToString:@"Update (closes the game, opens it again when done)"]);
+    assert(settingsPanel.controllerTargets.count == 1 && settingsPanel.controllerTargets[0] == button && NSMaxX(button.frame) <= page.frame.size.width);
+    update_status(@{@"total": @45}); says(@"The newest, f0cfa3f, has 45 more commits (the newest 2 below):");
+    /* What cannot be updated: why, and how to do it by hand; no button. */
+    update_status(@{@"state": @"blocked", @"reason": @"local_changes", @"detail": @"M runtime/loader.c"});
+    says(@"•  fix: 一个修复"); says(@"The checkout has uncommitted changes, so it cannot be updated for you."); says(@"M runtime/loader.c");
+    says(@"Please update the code and build again yourself: git pull in your checkout, then python3.14 update_runtime.py"); assert(button.hidden);
+    for (NSString *reason in @[@"no_repo", @"no_access", @"git_failed", @"fetch_failed", @"no_upstream", @"not_main", @"unpushed"]) {
+        update_status(@{@"state": @"error", @"reason": reason, @"detail": @"", @"commits": @[]}); lacks(reason); says(@"Please update the code and build again yourself"); assert(button.hidden);
+    }
+    update_status(@{@"state": @"failed", @"reason": @"update_failed", @"detail": @"ERROR: the build stopped"});
+    says(@"Updating the app did not work and it was left as it was"); says(@"ERROR: the build stopped"); says(@"Please update the code and build again yourself");
+    /* After an update this start runs it: the newest. Another launch's update: from the next start. */
+    update_status(@{@"state": @"updated", @"installed": @"f0cfa3f"}); status_is(@"Updated to f0cfa3f; from the next start"); lacks(@"adds:");
+    setenv("TOTK_SOURCE_COMMIT", "f0cfa3f", 1); page.shown = NO; [settingsPanel refreshUpdatePage];
+    status_is(@""); assert([update_text() isEqualToString:@"Version f0cfa3f · the newest"]);
+    setenv("TOTK_SOURCE_COMMIT", "ab6ebe8", 1);
+    update_status(@{@"state": @"updating"}); status_is(@"Updating…"); assert(button.hidden);
+    update_status(@{@"state": @"closing"}); status_is(@"Closing the game to update…"); assert(button.hidden);
+    for (NSString *word in @[@"Advice", @"worth updating", @"Copy", @"AI", @"Automatic"]) lacks(word);
+    /* Anything that is not a whole version 1 document: none, never a crash. */
+    NSData *whole = [NSJSONSerialization dataWithJSONObject:update_doc(@{}) options:0 error:nil];
+    for (NSData *bytes in @[[@"{ not json" dataUsingEncoding:NSUTF8StringEncoding], [whole subdataWithRange:NSMakeRange(0, whole.length / 2)], NSData.data,
+                            [@"[1]" dataUsingEncoding:NSUTF8StringEncoding], [NSData dataWithBytes:"\xff\xfe" length:2]]) {
+        update_bytes(bytes); assert([update_text() isEqualToString:@"Version ab6ebe8"] && button.hidden);
+    }
+    for (NSDictionary *fields in @[@{@"version": @2}, @{@"version": @"1"}, @{@"at": NSNull.null}, @{@"state": @"other"}, @{@"commits": @"一"},
+                                   @{@"commits": @[@1]}, @{@"total": @YES}, @{@"reason": @3}, @{@"to": @[]}]) {
+        update_status(fields); assert([update_text() isEqualToString:@"Version ab6ebe8"] && button.hidden);
+    }
+    /* Up / down scroll a long list; the button stays the place. */
+    NSMutableArray *many = [NSMutableArray array]; for (int i = 0; i < 30; i++) [many addObject:[NSString stringWithFormat:@"fix: 第 %d 个", i]];
+    update_status(@{@"commits": many, @"total": @30}); NSClipView *clip = page.scroll.contentView; assert(clip.bounds.origin.y == 0);
+    settingsPanel.controllerIndex = 0; g_settings_controller_active = YES; [settingsPanel controllerHighlight];
+    pad_press(PAD_DOWN); assert(clip.bounds.origin.y == UPDATE_TAB_SCROLL && settingsPanel.controllerTargets[(NSUInteger)settingsPanel.controllerIndex] == button);
+    [settingsPanel.timer fire]; assert(clip.bounds.origin.y == UPDATE_TAB_SCROLL);   /* the same document keeps its place */
+    pad_press(PAD_UP); assert(clip.bounds.origin.y == 0);
+    /* The Update button (A on it): the launcher's install with this game's pid; the page says the game will close. */
+    update_status(@{}); spawned[0] = 0; [window makeFirstResponder:nil];
+    settingsPanel.controllerIndex = 0; [settingsPanel controllerHighlight]; pad_press(PAD_A);
+    char expect[64]; snprintf(expect, sizeof expect, "--update-install %d", (int)getpid());
+    assert(!strcmp(spawned, expect) && window.firstResponder == window.contentView);
+    status_is(@"Closing the game to update…"); spawned[0] = 0; pad_press(PAD_A); assert(!spawned[0]);   /* once */
+    [settingsPanel.timer fire]; assert(button.hidden && settingsPanel.controllerTargets.count == 0);
+    /* An agent's test session: no check, no button. */
+    settings_show(0); page.pressed = NO; page.checkedAt = 0; spawned[0] = 0; setenv("TOTK_SLOT_OWNER", "claude", 1); settings_show(1);
+    assert(settingsPanel.page == SETTINGS_PAGE_UPDATE && !spawned[0]); status_is(@"A test run: no check, no update"); assert(update_page().updateButton.hidden);
+    unsetenv("TOTK_SLOT_OWNER");
+    /* In Chinese. */
+    settings_show(0); setenv("TOTK_UI_LANG", "zh", 1); spawn_ok = 0; settings_show(1);
+    assert(settingsOpen && settingsPanel.page == SETTINGS_PAGE_UPDATE && [[settingsPanel.tabs labelForSegment:SETTINGS_PAGE_UPDATE] isEqualToString:@"更新"]);
+    assert(NSContainsRect(window.contentView.bounds, settingsPanel.frame));
+    update_page().pressed = NO; update_status(@{}); says(@"当前版本 ab6ebe8"); says(@"最新版 f0cfa3f 多了这些提交：");
+    assert([update_page().updateButton.title isEqualToString:@"更新（会关闭游戏，更新完自动重新打开）"]);
+    update_status(@{@"state": @"blocked", @"reason": @"unpushed"}); says(@"项目文件夹里有上游没有的提交，没法替你更新。"); says(@"请自己更新代码再重新编译");
+    /* A newer document appears by itself while the page shows. */
+    NSData *newer = [NSJSONSerialization dataWithJSONObject:update_doc(@{@"state": @"latest"}) options:0 error:nil];
+    assert([newer writeToFile:[updateDir stringByAppendingPathComponent:@"status.json"] atomically:YES]);
+    [settingsPanel.timer fire]; assert([update_text() isEqualToString:@"当前版本 ab6ebe8 · 已是最新版"]);
+    settings_show(0); setenv("TOTK_UI_LANG", "en", 1); spawn_ok = 1;
+}
+
 int main(int argc, const char **argv) { @autoreleasepool {
     if (argc==2 && !strcmp(argv[1],"frame")) { frame_probe(); return 0; }
     [NSApplication sharedApplication];
     controller_map_default(fakeMap, fakeModes); setenv("TOTK_UI_LANG", "en", 1); unsetenv("TOTK_SOURCE_COMMIT");
+    if (argc == 2 && !strcmp(argv[1], "update")) { update_probe(); puts("pass: update page"); return 0; }
     if (argc == 2) { persistence_probe(argv[1]); puts("pass: settings persistence"); return 0; }
     unsetenv("TOTK_MFX"); /* priority/disabled row covered by the headless frame probe */
     setenv("TOTK_OUTPUT_RES", "2560x1440", 1);   /* the native size the resolution row names */
@@ -289,9 +454,11 @@ int main(int argc, const char **argv) { @autoreleasepool {
     runtime_input_key_synthetic(18, 1); runtime_input_key_synthetic(18, 1); tick(); runtime_input_key_synthetic(18, 0); tick();
     assert(settingsOpen && fakeSettingsCapture && settingsPanel && !settingsPanel.hidden && settingsPanel.superview == window.contentView);
     assert(NSContainsRect(window.contentView.bounds, settingsPanel.frame));
-    assert(settingsPanel.allRows.count == 23 + 2 * TOTK_V143);   /* 16 (anisotropy last on the display page), then the effects page:
-                                                                 FOV, two distances, FXAA, sharpening and two effect
-                                                                 switches (1.4.3), or six greyed rows */
+    assert(settingsPanel.allRows.count == 25 + TOTK_V143);   /* 17 (anisotropy last on the display page, controller
+                                                                 background input on the input page), then the effects
+                                                                 page: FOV, two distances, shadows, depth of field, FXAA,
+                                                                 sharpening and effect switches (1.4.3), or eight greyed
+                                                                 rows (Breath of the Wild 1.9.0's shadow resolution live) */
 
     /* FPS graph: a switch (here off at start; frontend.m turns it on when nothing is saved), kept in fps-graph.txt
        that both games share (user 2026-10-29). */
@@ -337,7 +504,8 @@ int main(int argc, const char **argv) { @autoreleasepool {
     mfx_set(MFX_MAX); shows(@"Frame interpolation", @"Unlimited");
     pick(@"Frame interpolation", @"40+40"); assert(mfx_requested() == MFX_40);
     pick(@"Frame interpolation", @"50+50"); assert(mfx_requested() == MFX_50);
-    assert(menu(@"Frame interpolation").numberOfItems == 5 && menu(@"Frame lock").numberOfItems == 7);
+    pick(@"Frame interpolation", @"60+60"); assert(mfx_requested() == MFX_60);
+    assert(menu(@"Frame interpolation").numberOfItems == 6 && menu(@"Frame lock").numberOfItems == 7);
     pick(@"Frame interpolation", @"Off"); mfx_latch(); assert(!mfx_enabled());
 
     /* Resolution: the player picks; 1080p without MetalFX at the start. */
@@ -397,7 +565,7 @@ int main(int argc, const char **argv) { @autoreleasepool {
     flip(@"Edge smoothing", NO); assert(!taa_enabled());
     /* Stronger ambient occlusion (PR #1316): off by default; every level acts at once (the Mac's shaders always carry the
        parameters) and is saved; a run without them (TOTK_SSAO=0) shows off, greyed out (rows are made at each opening). */
-#if defined(TOTK_GAME_V143) || defined(GAME_BOTW190)
+#if defined(TOTK_GAME_V143) || defined(GAME_BOTW190) || defined(TOTK_GAME_V121)
     shows(@"Stronger ambient occlusion", @"Off (as the game has it)"); assert(fakeSsaoStart == -1);
     pick(@"Stronger ambient occlusion", @"1.5×"); assert(settingsSsao == 150 && fakeSsaoSet == 150 && !strcmp(savedName, "ssao.txt") && !strcmp(savedWord, "150"));
     pick(@"Stronger ambient occlusion", @"2×"); assert(fakeSsaoSet == 200 && !strcmp(savedWord, "200"));
@@ -441,6 +609,30 @@ int main(int argc, const char **argv) { @autoreleasepool {
     flip(@"Ambient occlusion", NO); assert(!strcmp(savedWord, "ao bloom"));
     flip(@"Bloom", YES); flip(@"Ambient occlusion", YES); assert(fakeFxOn[0] && fakeFxOn[1] && !strcmp(savedWord, "none"));
 #else
+    /* Shadow resolution (Breath of the Wild 1.9.0, the production calls of game_patches_botw.c): the next launch's choice,
+       saved in shadows.txt (this run keeps the size it started with: tests/test_botw_shadow_res.c); greyed out while
+       TOTK_SHADOW_RES decides (rows are made at each opening). */
+#  ifdef GAME_BOTW190
+    assert([row(@"Shadow resolution").title isEqualToString:@"Shadow resolution (from the next launch)"]);
+    shows(@"Shadow resolution", @"As the game has it");
+    pick(@"Shadow resolution", @"2048 per cascade"); assert(runtime_shadow_res_saved() == 2048 && !strcmp(savedName, "shadows.txt") && !strcmp(savedWord, "2048"));
+    shows(@"Shadow resolution", @"2048 per cascade");
+    pick(@"Shadow resolution", @"As the game has it"); assert(!runtime_shadow_res_saved() && !strcmp(savedWord, "off"));
+    press(18); setenv("TOTK_SHADOW_RES", "2048", 1); press(18); assert(settingsOpen && !menu(@"Shadow resolution").enabled);
+    shows(@"Shadow resolution", @"Set by TOTK_SHADOW_RES");
+    press(18); unsetenv("TOTK_SHADOW_RES"); press(18); assert(settingsOpen && menu(@"Shadow resolution").enabled);
+    /* Where the patch does not act (ios_code(): the iOS export's run here, the device's code there) nothing is offered. */
+    press(18); setenv("TOTK_EXPORT_IOS", "/nonexistent", 1); press(18); assert(settingsOpen && !menu(@"Shadow resolution").enabled);
+    shows(@"Shadow resolution", @"Not in this version");
+    press(18); unsetenv("TOTK_EXPORT_IOS"); press(18); assert(settingsOpen && menu(@"Shadow resolution").enabled);
+    /* "Reset to defaults" sets it back to the game's own and removes shadows.txt. */
+    pick(@"Shadow resolution", @"2048 per cascade"); [settingsPanel selectPage:SETTINGS_PAGE_EFFECTS]; tick();
+    [settingsPanel.effectsButtons[0] performClick:nil]; tick();
+    assert(!runtime_shadow_res_saved() && !strcmp(removedName, "shadows.txt"));
+    [settingsPanel selectPage:SETTINGS_PAGE_DISPLAY]; tick();
+#  else
+    shows(@"Shadow resolution", @"Not in this version"); assert(!menu(@"Shadow resolution").enabled);
+#  endif
     shows(@"Render distance", @"Not in this version"); assert(!menu(@"Render distance").enabled);
     shows(@"Effect switches", @"Not in this version"); shows(@"Sharpening", @"Not in this version");
 #endif
@@ -470,6 +662,10 @@ int main(int argc, const char **argv) { @autoreleasepool {
     pick(@"Controller type", @"Switch"); assert(fakePadType == GAMEPAD_TYPE_SWITCH);
     pick(@"Controller type", @"Auto (PlayStation)"); assert(fakePadType == GAMEPAD_TYPE_AUTO);
     fakePadDetected = -1; shows(@"Controller type", @"Auto (no controller)");
+
+    assert(!switched(@"Controller input in background"));
+    flip(@"Controller input in background", YES); assert(fakePadBackground && switched(@"Controller input in background"));
+    flip(@"Controller input in background", NO); assert(!fakePadBackground && !switched(@"Controller input in background"));
 
     /* Rumble, its strength and gyro aiming. */
     assert(switched(@"Rumble")); flip(@"Rumble", NO); assert(!fakeFeedback[0] && !switched(@"Rumble")); flip(@"Rumble", YES); assert(fakeFeedback[0]);
@@ -518,7 +714,7 @@ int main(int argc, const char **argv) { @autoreleasepool {
     settingsPanel.versionLabel.stringValue = versionText; settingsPanel.versionLabel.frame = NSMakeRect(18, 9, 230, 16);
     [settingsPanel selectPage:SETTINGS_PAGE_INPUT];
     assert(contribute.hidden && starButton.hidden);   /* the first page only */
-    assert(settingsPanel.rows.count == 7 && !settingsPanel.pages[SETTINGS_PAGE_INPUT].hidden && settingsPanel.pages[SETTINGS_PAGE_DISPLAY].hidden);
+    assert(settingsPanel.rows.count == 8 && !settingsPanel.pages[SETTINGS_PAGE_INPUT].hidden && settingsPanel.pages[SETTINGS_PAGE_DISPLAY].hidden);
     assert(settingsPanel.tabs.selectedSegment == SETTINGS_PAGE_INPUT);
     press(18); press(18); assert(settingsOpen && settingsPanel.page == SETTINGS_PAGE_INPUT);
 
@@ -619,7 +815,7 @@ int main(int argc, const char **argv) { @autoreleasepool {
     [settingsPanel endCapture];
     [settingsPanel controllerPad:(RuntimeGamepadState){.connected = 1} time:102 active:YES];
     [settingsPanel controllerPad:(RuntimeGamepadState){.connected = 1, .buttons = 1u << 7} time:102.1 active:YES];
-    assert(settingsPanel.page == SETTINGS_PAGE_DISPLAY);
+    assert(settingsPanel.page == SETTINGS_PAGE_UPDATE);
     [settingsPanel controllerPad:(RuntimeGamepadState){.connected = 1} time:103 active:YES];
     [settingsPanel controllerPad:(RuntimeGamepadState){.connected = 1, .buttons = 1u << 6} time:103.1 active:YES];
     assert(settingsPanel.page == SETTINGS_PAGE_BINDINGS);
@@ -641,6 +837,22 @@ int main(int argc, const char **argv) { @autoreleasepool {
     assert([kb inputAt:NSMakePoint(NSMidX(oneKey), NSMidY(oneKey)) rect:NULL] == -1);   /* key 1 opens the panel: not changeable */
     assert([kb inputAt:NSMakePoint(NSMidX(wheel), NSMidY(wheel)) rect:NULL] == KEYMAP_MOUSE_FIRST + 2);
     assert([kb inputAt:NSMakePoint(NSMinX(leftClick) + 8, NSMidY(leftClick)) rect:NULL] == KEYMAP_MOUSE_FIRST);
+    /* Only a press on the panel itself drags it: a drag that started on the drawing still reaches the panel, and it used to
+       jump there from the last press's spot. */
+    NSEvent *(^mouse)(NSEventType, NSPoint) = ^NSEvent *(NSEventType type, NSPoint at) {
+        return [NSEvent mouseEventWithType:type location:at modifierFlags:0 timestamp:0 windowNumber:window.windowNumber context:nil eventNumber:0 clickCount:1 pressure:1]; };
+    NSPoint spot = settingsPanel.frame.origin, savedAt = g_settings_at, background = [settingsPanel convertPoint:NSMakePoint(6, settingsPanel.bounds.size.height - 6) toView:nil];
+    [settingsPanel mouseDown:mouse(NSEventTypeLeftMouseDown, background)];
+    [settingsPanel mouseDragged:mouse(NSEventTypeLeftMouseDragged, NSMakePoint(background.x + 3, background.y + 2))];
+    [settingsPanel mouseUp:mouse(NSEventTypeLeftMouseUp, NSMakePoint(background.x + 3, background.y + 2))];
+    assert(NSEqualPoints(settingsPanel.frame.origin, NSMakePoint(spot.x + 3, spot.y + 2)));
+    spot = settingsPanel.frame.origin;
+    NSPoint onDrawing = [kb convertPoint:NSMakePoint(NSMidX(oneKey), NSMidY(oneKey)) toView:nil];   /* no menu there */
+    [kb mouseDown:mouse(NSEventTypeLeftMouseDown, onDrawing)];
+    [kb mouseDragged:mouse(NSEventTypeLeftMouseDragged, NSMakePoint(onDrawing.x + 3, onDrawing.y + 2))];
+    [kb mouseUp:mouse(NSEventTypeLeftMouseUp, NSMakePoint(onDrawing.x + 3, onDrawing.y + 2))];
+    assert(NSEqualPoints(settingsPanel.frame.origin, spot));
+    g_settings_at = savedAt; [settingsPanel center];
     NSMenu *actions = [settingsPanel menuForInput:14 pad:NO]; NSMenuItem *ticked = nil, *jump = nil;
     for (NSMenuItem *i in actions.itemArray) { if (i.state == NSControlStateValueOn) ticked = i; if (i.action && i.tag == KEYMAP_X) jump = i; }
     assert([actions.itemArray.firstObject.title isEqualToString:@"E"] && ticked && ticked.tag == KEYMAP_A && jump && [actions.itemArray.lastObject.title isEqualToString:@"None (unused)"]);

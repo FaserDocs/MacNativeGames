@@ -239,9 +239,11 @@ def probe_runtime(tmp, version, logs):
         raise BuildError(f'the new runtime does not load the app\'s game files ({last}; {log}); the app was not changed')
 
 
-def record_commit(tmp):
+def record_commit(tmp, work):
     """The commit this runtime is built from, in the app's Info.plist: MNGSourceCommit (build_app.source_commit) for
-    the HUD, which would otherwise keep showing the commit of the app's first build."""
+    the HUD, which would otherwise keep showing the commit of the app's first build; and where the Update page's update
+    finds the checkout, the work folder and the Python (build_app.record_update_source), so an app made before those were
+    recorded updates itself from then on."""
     path = tmp / 'Contents/Info.plist'
     info = plistlib.loads(path.read_bytes())
     commit = build_app.source_commit()
@@ -249,6 +251,7 @@ def record_commit(tmp):
         info['MNGSourceCommit'] = commit
     else:
         info.pop('MNGSourceCommit', None)
+    build_app.record_update_source(info, work)
     path.write_bytes(plistlib.dumps(info))
 
 
@@ -349,7 +352,7 @@ def main(argv):
         if not lists:
             say('   the app\'s startup shader seed predates its shader-keys.json, so the app keeps its warm-up lists (--seed makes a new one)')
         build_app.place_runtime(tree, tmp, version, logs, game=game, lists=lists)
-        record_commit(tmp)
+        record_commit(tmp, work)
         probe_runtime(tmp, version, logs)
         build_app.mac_pipelines(tree, new_res, version, logs)   # the new binary's pipeline keys, as a build makes them
         build_app.sign_app(tmp, logs)

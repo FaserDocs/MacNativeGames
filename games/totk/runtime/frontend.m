@@ -36,6 +36,7 @@ void taa_set(int on);
 static uint64_t bootStartNS;
 static _Atomic uint64_t presentedFrames;
 static _Atomic int warmPending;
+static _Atomic int titleFree;   /* runtime_warm_title: the warm-up no longer holds the title back */
 /* Counts foreground time after warm-up, including menus, like Screen Time.
    Diagnostic profiles have their own counter and never update the user's file. */
 static TOTKPlaytime *playtime;
@@ -82,16 +83,18 @@ extern void totk_sr_closing(void) __attribute__((weak_import));
 extern void totk_sr_settings(int open) __attribute__((weak_import));
 int runtime_front_window_visible(void);   /* below: 1 seen, 0 covered, -1 not known yet */
 void *front_metal_layer(void){return (__bridge void *)metalLayer;}
-/* The start-up screen goes once a frame was presented and the warm-up is done: the player sees the game from here on. */
+/* The start-up screen goes once a frame was presented and the warm-up is done, or lets the title come before it ends
+   (runtime_warm_title): the player sees the game from here on. */
 static void boot_overlay_hide(void){
  if(!bootOverlay||bootOverlay.hidden)return;
  bootOverlay.hidden=YES;
+ fprintf(stderr,"[totk-boot] %.3f start-up screen hidden\n",(runtime_now_ns()-bootStartNS)/1e9);
  if(totk_sr_picture)totk_sr_picture(window.isKeyWindow,runtime_front_window_visible()!=0);
 }
 void front_frame_presented(void){
  if(atomic_fetch_add_explicit(&presentedFrames,1,memory_order_relaxed)==0){
   fprintf(stderr,"[totk-boot] %.3f first presented frame\n",(runtime_now_ns()-bootStartNS)/1e9);
-  dispatch_async(dispatch_get_main_queue(), ^{if(!atomic_load(&warmPending))boot_overlay_hide();});
+  dispatch_async(dispatch_get_main_queue(), ^{if(!atomic_load(&warmPending)||atomic_load(&titleFree))boot_overlay_hide();});
  }
 }
 void runtime_boot_progress(const char *stage,uint64_t done,uint64_t total){
@@ -144,13 +147,20 @@ void runtime_warm_done(void){
  atomic_store(&warmPending,0);
  dispatch_async(dispatch_get_main_queue(), ^{if(atomic_load(&presentedFrames))boot_overlay_hide();});
 }
+/* nvn_mtl.m warm_start, where the game's sound starts: the title may be seen. With the rest of the warm-up going on behind
+   the menu (a Mac with a complete pipeline archive, TOTK_WARM_BEFORE_TITLE=0) the start-up screen covered a title that
+   already played its music and took input until the warm-up ended (2026-10-30); it now goes with the first frame. */
+void runtime_warm_title(void){
+ atomic_store(&titleFree,1);
+ dispatch_async(dispatch_get_main_queue(), ^{if(atomic_load(&presentedFrames))boot_overlay_hide();});
+}
 uint64_t front_game_res(int docked){(void)docked;return (720ULL<<32)|1280;}
 /* TOTK_ASSUME_FOCUS=1: unattended test runs. macOS refuses to activate an app launched from the background while the user is working in
    another one; the window then never becomes key, GetCurrentFocusState stays 0 and the game waits before its first frame. In this mode the
    game is told it is focused, and the window is shown without taking the keyboard from the user (scripted input does not need it). */
 static int assume_focus(void){static int v=-1;if(v<0){const char *e=getenv("TOTK_ASSUME_FOCUS");v=e&&atoi(e);}return v;}
-/* Keep the guest active when the macOS window loses key status. Native input is still cleared
-   in windowDidResignKey so a held key cannot remain stuck while another app has focus. */
+/* Keep the guest active when the macOS window loses key status. Window keys and mouse input are cleared
+   in windowDidResignKey so they cannot stick; physical controllers follow their saved background-input choice. */
 int runtime_front_focus(void){return 1;}
 static CVReturn vsync_callback(CVDisplayLinkRef link,const CVTimeStamp *now,const CVTimeStamp *output,CVOptionFlags flags,CVOptionFlags *out,void *ctx){
  (void)link;(void)now;(void)output;(void)flags;(void)out;(void)ctx;
@@ -488,8 +498,8 @@ void runtime_front_resize_aspect(double ratio){
 @interface TOTKWindowDelegate:NSObject<NSWindowDelegate>
 @end
 @implementation TOTKWindowDelegate
--(void)windowDidBecomeKey:(NSNotification *)n{(void)n;front_playtime_tick(NO);atomic_store(&focused,1);if(window.styleMask&NSWindowStyleMaskFullScreen)[(TOTKInputView *)window.contentView setCursorAutoHideEnabled:YES];runtime_oe_push_message(15);front_mouse_update();fprintf(stderr,"[totk] window gained focus\n");front_sr_window();}
--(void)windowDidResignKey:(NSNotification *)n{(void)n;front_playtime_tick(YES);atomic_store(&focused,0);[(TOTKInputView *)window.contentView setCursorAutoHideEnabled:NO];front_mouse_update();runtime_input_clear();runtime_oe_push_message(15);fprintf(stderr,"[totk] window lost focus\n");front_sr_window();}
+-(void)windowDidBecomeKey:(NSNotification *)n{(void)n;front_playtime_tick(NO);atomic_store(&focused,1);runtime_gamepad_focus(1);if(window.styleMask&NSWindowStyleMaskFullScreen)[(TOTKInputView *)window.contentView setCursorAutoHideEnabled:YES];runtime_oe_push_message(15);front_mouse_update();fprintf(stderr,"[totk] window gained focus\n");front_sr_window();}
+-(void)windowDidResignKey:(NSNotification *)n{(void)n;front_playtime_tick(YES);atomic_store(&focused,0);[(TOTKInputView *)window.contentView setCursorAutoHideEnabled:NO];front_mouse_update();runtime_gamepad_focus(0);runtime_input_clear_window();runtime_oe_push_message(15);fprintf(stderr,"[totk] window lost focus\n");front_sr_window();}
 /* The process ends with the window. Save writes go straight to the files (runtime/fs_host.c), so a close in the middle of a
    save waits (up to 15 s, the window already gone) until the game has written and committed it (runtime_fs_save_busy). */
 -(void)windowWillClose:(NSNotification *)n{(void)n;front_playtime_tick(YES);
@@ -587,6 +597,7 @@ void runtime_front_run(void(*callback)(void)){
   [NSNotificationCenter.defaultCenter addObserverForName:NSApplicationDidChangeScreenParametersNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *n){(void)n;front_sr_view();}];   /* a refresh rate changed on the same screen */
   dispatch_after(dispatch_time(DISPATCH_TIME_NOW,3*NSEC_PER_SEC),dispatch_get_main_queue(),^{note_occlusion(" 3 s after opening");});
   atomic_store(&focused,1);
+  runtime_gamepad_focus(window.isKeyWindow||assume_focus());   /* a test window never becomes key (TOTK_ASSUME_FOCUS) */
   if(CVDisplayLinkCreateWithActiveCGDisplays(&displayLink)||CVDisplayLinkSetOutputCallback(displayLink,vsync_callback,NULL)||CVDisplayLinkStart(displayLink))runtime_fail("native display link initialization");
   pthread_t guest;pthread_attr_t attr;pthread_attr_init(&attr);pthread_attr_setstacksize(&attr,8*1024*1024);int err=pthread_create(&guest,&attr,guest_main,(void *)callback);pthread_attr_destroy(&attr);if(err)runtime_fail("native game thread creation");
   [NSApp run];runtime_fail("native event loop returned unexpectedly");

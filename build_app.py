@@ -46,7 +46,7 @@ For iPhone/iPad: Xcode 26+ with iOS/Metal toolchains, plus xcodegen, CMake and N
 Optional: Xcode's Metal toolchain (xcodebuild -downloadComponent MetalToolchain) compiles the startup shaders into the
 app, so moving or rebuilding it does not repeat that work at launch.
 """
-import argparse, concurrent.futures, glob, hashlib, json, os, platform, shutil, struct, subprocess, sys, threading, time
+import argparse, concurrent.futures, glob, hashlib, json, os, platform, plistlib, shutil, struct, subprocess, sys, threading, time
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent
@@ -1409,7 +1409,13 @@ def keep_game_data(new, old, *, verify=app_seal_valid, _moves=None):
 def sign_app(app, logs):
     # Seal the bundle, including Info.plist and game resources. Copied helper
     # executables keep their existing signatures and byte identity. Checked once by install_app.
-    run(['codesign', '--force', '--sign', '-', app], logs / 'sign-app.log')
+    # The designated requirement is the bundle ID alone, not the ad-hoc default (this build's code hash): macOS keeps what
+    # the player allowed the app (Privacy & Security: a removable volume or Documents, where the Update page's
+    # checkout may be, app/auto_update.h) by that requirement, so a grant survives the next build or update instead of
+    # being asked again (user 2026-10-31).
+    bundle_id = plistlib.loads((Path(app) / 'Contents/Info.plist').read_bytes()).get('CFBundleIdentifier')
+    requirement = [f'-r=designated => identifier "{bundle_id}"'] if bundle_id else []
+    run(['codesign', '--force', '--sign', '-', *requirement, app], logs / 'sign-app.log')
 
 
 def remove_in_background(path):
@@ -1489,6 +1495,14 @@ def wait_until_closed(out, prefix=''):
         time.sleep(2)
 
 
+def record_update_source(info, work):
+    """Where the Update page's update (games/totk/app/auto_update.h) finds what made it: this checkout (git pull), the
+    work folder (update_runtime.py --work) and the Python that runs update_runtime.py. update_runtime.py writes them again."""
+    info['MNGSourceRepo'] = str(REPO)
+    info['MNGWorkFolder'] = str(Path(work).resolve())
+    info['MNGBuildPython'] = sys.executable
+
+
 def source_commit():
     """The short hash of the commit this checkout is on (user 2026-10-25: the HUD shows it, to tell which commit an app
     was built from; uncommitted changes are not shown), or '' outside a git checkout."""
@@ -1554,6 +1568,7 @@ def step_app(tree, out, logs, *, version="v0", game='totk', game_data='app', gam
     commit = source_commit()
     if commit:
         info['MNGSourceCommit'] = commit   # app/launcher.m -> TOTK_SOURCE_COMMIT: the HUD box shows which commit the app is
+    record_update_source(info, tree.parent)
     import plistlib
     (tmp / 'Contents/Info.plist').write_bytes(plistlib.dumps(info))
     (tmp / 'Contents/PkgInfo').write_bytes(b'APPL????')
