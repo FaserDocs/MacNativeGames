@@ -44,7 +44,7 @@
                                                              at once; graphics-aniso.txt; TOTK_ANISO first
      ambient occlusion    off / 1.5x / 2x / 3x, default off  dm_gfx_ssao_* (gfx/nvn/totk_ssao.h, PR #1316), saved in ssao.txt
                                                              (off or the strength and radius in percent); Tears of the
-                                                             Kingdom 1.4.3 and Breath of the Wild 1.9.0 only. Its shaders
+                                                             Kingdom 1.2.1 / 1.4.3 and Breath of the Wild 1.9.0 only. Its shaders
                                                              are always the patched ones on the Mac (off: the stock AO,
                                                              bit for bit), so every choice acts at once (user 2026-10-30);
                                                              TOTK_SSAO / _STRENGTH / _RADIUS decide first (greyed out)
@@ -154,7 +154,7 @@ static void settings_save_frame(void) {
 }
 /* Ambient occlusion (PR #1316): ssao.txt holds off or the strength and radius in percent, read before the guest starts
    because the shaders are patched as they load. The levels the row offers; a hand-written percent is kept too. */
-#if defined(TOTK_GAME_V143) || defined(GAME_BOTW190)
+#if defined(TOTK_GAME_V143) || defined(GAME_BOTW190) || defined(TOTK_GAME_V121)
 #define SETTINGS_SSAO 1
 #endif
 static int settingsSsao;   /* the saved choice: 0 off, else percent */
